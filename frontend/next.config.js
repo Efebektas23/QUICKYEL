@@ -17,9 +17,9 @@ const nextConfig = {
       },
     ],
   },
-  // Validate environment variables at build time
+  // Environment variables - must be explicitly passed to client
   env: {
-    NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000',
+    NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL,
   },
 };
 
