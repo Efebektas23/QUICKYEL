@@ -1,0 +1,80 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+venv_windows/
+env/
+ENV/
+.venv
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+backend/.env
+frontend/.env.local
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+quickyel.db
+
+# API Keys & Credentials (HASSAS DOSYALAR - ASLA YÜKLEMEYİN!)
+*.json
+!package.json
+!package-lock.json
+!tsconfig.json
+!next.config.js
+!postcss.config.js
+!tailwind.config.ts
+!*.config.json
+firebase-admin-key.json
+google-cloud-vision-key.json
+*-firebase-adminsdk-*.json
+*-0c297328942e.json
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Next.js
+.next/
+out/
+build/
+dist/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+.dockerignore
+
+# Testing
+.coverage
+.pytest_cache/
+htmlcov/
+
+# Temporary files
+*.tmp
+*.temp
+.cache/

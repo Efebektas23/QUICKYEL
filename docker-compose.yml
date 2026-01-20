@@ -1,0 +1,62 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  db:
+    image: postgres:15-alpine
+    container_name: quickyel-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: quickyel
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # FastAPI Backend - Google Native Stack
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: quickyel-backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/quickyel
+      GOOGLE_APPLICATION_CREDENTIALS: /app/google-cloud-vision-key.json
+      GOOGLE_CLOUD_PROJECT: muhtar-5ab9b
+      GCS_BUCKET_NAME: quickyel-receipts
+      GEMINI_MODEL: gemini-1.5-flash
+      VISION_MONTHLY_LIMIT: 1000
+    env_file:
+      - ./backend/.env
+    volumes:
+      - ./backend/google-cloud-vision-key.json:/app/google-cloud-vision-key.json:ro
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # Next.js Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: quickyel-frontend
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
