@@ -28,6 +28,7 @@ bcrypt==4.1.2
 python-dotenv==1.0.1
 pydantic==2.6.0
 pydantic-settings==2.1.0
+email-validator==2.1.0  # Pydantic email validation
 
 # Date/Time
 python-dateutil==2.8.2
