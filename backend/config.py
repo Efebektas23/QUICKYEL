@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 1440  # 24 hours
     
     # CORS
-    cors_origins: str = "http://localhost:3000"
+    cors_origins: str = "http://localhost:3000"  # Default for local development
     
     # Debug
     debug: bool = True

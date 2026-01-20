@@ -18,12 +18,29 @@ if database_url and "postgresql://" in database_url:
     # Convert postgresql:// to postgresql+asyncpg:// for async SQLAlchemy
     if "postgresql+asyncpg://" not in database_url:
         database_url = database_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    
+    # Railway PostgreSQL requires SSL connection
+    # Add SSL parameter if not already present
+    if "?" not in database_url and "ssl" not in database_url.lower():
+        # Check if Railway (internal connection) - Railway uses self-signed certs
+        if "railway.app" in database_url or "railway.internal" in database_url:
+            # Railway internal connections may not require SSL verification
+            database_url = f"{database_url}?ssl=prefer"
+        else:
+            # External PostgreSQL connections should use SSL
+            database_url = f"{database_url}?ssl=require"
+    
     DATABASE_URL = database_url
-    logger.info("Using PostgreSQL database (asyncpg)")
+    logger.info("Using PostgreSQL database (asyncpg) with SSL")
 elif database_url and "postgresql+asyncpg://" in database_url:
-    # Already in correct format
+    # Already in correct format, but check SSL
+    if "?" not in database_url and "ssl" not in database_url.lower():
+        if "railway.app" in database_url or "railway.internal" in database_url:
+            database_url = f"{database_url}?ssl=prefer"
+        else:
+            database_url = f"{database_url}?ssl=require"
     DATABASE_URL = database_url
-    logger.info("Using PostgreSQL database (asyncpg) - already formatted")
+    logger.info("Using PostgreSQL database (asyncpg) - already formatted with SSL")
 else:
     # Fallback to SQLite for local development/testing
     db_path = os.path.join(os.path.dirname(__file__), "quickyel.db")
@@ -49,6 +66,15 @@ if "sqlite" in DATABASE_URL:
     logger.info("SQLite engine created (no connection pooling)")
 else:
     # PostgreSQL connection pool settings
+    # Railway PostgreSQL connections may need SSL configuration
+    connect_args = {}
+    if "railway" in DATABASE_URL.lower():
+        # Railway uses self-signed certificates, disable SSL verification for internal connections
+        # asyncpg SSL mode: 'disable', 'allow', 'prefer', 'require', 'verify-ca', 'verify-full'
+        connect_args = {
+            "ssl": "prefer"  # Prefer SSL but don't require strict verification for Railway
+        }
+    
     engine = create_async_engine(
         DATABASE_URL,
         echo=settings.debug,
@@ -58,8 +84,9 @@ else:
         max_overflow=10,  # Allow up to 10 additional connections
         pool_timeout=30,  # Wait 30 seconds for a connection
         pool_recycle=3600,  # Recycle connections after 1 hour
+        connect_args=connect_args if connect_args else None,
     )
-    logger.info("PostgreSQL engine created with connection pooling")
+    logger.info(f"PostgreSQL engine created with connection pooling (SSL: {connect_args.get('ssl', 'default') if connect_args else 'default'})")
 
 AsyncSessionLocal = async_sessionmaker(
     engine,
