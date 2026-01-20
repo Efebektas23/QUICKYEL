@@ -81,44 +81,68 @@ else:
     # Get SSL configuration - ensure it's always a dict, never None
     def get_ssl_config() -> dict:
         """Get SSL configuration for PostgreSQL connection. Always returns a dict."""
+        # Always start with empty dict - never None
         ssl_config = {}
         
-        if "railway" in DATABASE_URL.lower():
-            # Railway uses self-signed certificates, disable SSL verification for internal connections
-            # asyncpg SSL mode: 'disable', 'allow', 'prefer', 'require', 'verify-ca', 'verify-full'
-            ssl_config["ssl"] = "prefer"  # Prefer SSL but don't require strict verification for Railway
-            logger.info("Railway PostgreSQL detected - using SSL prefer mode")
-        elif "ssl" in DATABASE_URL.lower() or "sslmode" in DATABASE_URL.lower():
-            # URL already contains SSL parameters, let asyncpg handle it
-            logger.info("SSL parameters detected in DATABASE_URL")
-        else:
-            # No SSL configuration needed, return empty dict
-            logger.info("No SSL configuration required")
+        try:
+            if "railway" in DATABASE_URL.lower():
+                # Railway uses self-signed certificates, disable SSL verification for internal connections
+                # asyncpg SSL mode: 'disable', 'allow', 'prefer', 'require', 'verify-ca', 'verify-full'
+                ssl_config["ssl"] = "prefer"  # Prefer SSL but don't require strict verification for Railway
+                logger.info("Railway PostgreSQL detected - using SSL prefer mode")
+            elif "ssl" in DATABASE_URL.lower() or "sslmode" in DATABASE_URL.lower():
+                # URL already contains SSL parameters, let asyncpg handle it
+                logger.info("SSL parameters detected in DATABASE_URL")
+            else:
+                # No SSL configuration needed, return empty dict
+                logger.info("No SSL configuration required")
+        except Exception as e:
+            logger.warning(f"Error determining SSL config: {e}, using empty dict")
+            ssl_config = {}
         
-        # Always return a dict, never None
-        return ssl_config or {}
+        # Defensive: Always return a dict, never None
+        # Use multiple safety checks
+        if ssl_config is None:
+            ssl_config = {}
+        if not isinstance(ssl_config, dict):
+            ssl_config = {}
+        
+        return ssl_config
     
-    # Get SSL config - guaranteed to be a dict
-    connect_args = get_ssl_config()
+    # Get SSL config with multiple safety checks
+    connect_args = get_ssl_config() or {}  # First safety: or {}
     
-    # Ensure connect_args is always a dict (defensive programming)
+    # Additional defensive checks
     if connect_args is None:
         connect_args = {}
+    if not isinstance(connect_args, dict):
+        logger.error(f"connect_args is not a dict: {type(connect_args)}, converting to empty dict")
+        connect_args = {}
     
-    # Create engine with guaranteed dict for connect_args
-    engine = create_async_engine(
-        DATABASE_URL,
-        echo=settings.debug,
-        future=True,
-        pool_pre_ping=True,  # Reconnect if connection is dead (important for Railway)
-        pool_size=5,  # Maintain 5 connections
-        max_overflow=10,  # Allow up to 10 additional connections
-        pool_timeout=30,  # Wait 30 seconds for a connection
-        pool_recycle=3600,  # Recycle connections after 1 hour
-        connect_args=connect_args if connect_args else {}  # Always a dict, never None
-    )
+    # Prepare engine arguments
+    engine_kwargs = {
+        "url": DATABASE_URL,
+        "echo": settings.debug,
+        "future": True,
+        "pool_pre_ping": True,  # Reconnect if connection is dead (important for Railway)
+        "pool_size": 5,  # Maintain 5 connections
+        "max_overflow": 10,  # Allow up to 10 additional connections
+        "pool_timeout": 30,  # Wait 30 seconds for a connection
+        "pool_recycle": 3600,  # Recycle connections after 1 hour
+    }
     
-    ssl_mode = connect_args.get("ssl", "default") if connect_args else "default"
+    # Only add connect_args if it's a non-empty dict
+    # SQLAlchemy accepts empty dict, but it's cleaner to omit if empty
+    if connect_args and isinstance(connect_args, dict) and len(connect_args) > 0:
+        engine_kwargs["connect_args"] = connect_args
+        logger.info(f"Adding connect_args to engine: {connect_args}")
+    else:
+        logger.info("No connect_args needed, using default connection settings")
+    
+    # Create engine with guaranteed safe arguments
+    engine = create_async_engine(**engine_kwargs)
+    
+    ssl_mode = connect_args.get("ssl", "default") if isinstance(connect_args, dict) else "default"
     logger.info(f"PostgreSQL engine created with connection pooling (SSL: {ssl_mode})")
 
 AsyncSessionLocal = async_sessionmaker(
