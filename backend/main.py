@@ -82,12 +82,16 @@ app = FastAPI(
 )
 
 # CORS Middleware
+# Allow all origins in debug mode, otherwise use configured origins
+cors_origins = ["*"] if settings.debug else settings.cors_origins_list
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins_list,
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 # Include routers
