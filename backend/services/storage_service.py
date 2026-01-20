@@ -200,5 +200,21 @@ class StorageService:
         return f"https://storage.googleapis.com/{self.bucket_name}/{file_path}"
 
 
-# Singleton instance
-storage_service = StorageService()
+# Lazy initialization - service will be created on first use
+# This ensures Google credentials are set up before service initialization
+_storage_service_instance = None
+
+def get_storage_service() -> StorageService:
+    """Get or create Storage service instance (lazy initialization)."""
+    global _storage_service_instance
+    if _storage_service_instance is None:
+        _storage_service_instance = StorageService()
+    return _storage_service_instance
+
+# For backward compatibility - use a class that acts like the service
+class StorageServiceProxy:
+    """Proxy class that lazily initializes StorageService on first access."""
+    def __getattr__(self, name):
+        return getattr(get_storage_service(), name)
+
+storage_service = StorageServiceProxy()

@@ -211,5 +211,21 @@ EXTRACT AND RETURN JSON:"""
             raise
 
 
-# Singleton instance
-gemini_service = GeminiService()
+# Lazy initialization - service will be created on first use
+# This ensures Google credentials are set up before service initialization
+_gemini_service_instance = None
+
+def get_gemini_service() -> GeminiService:
+    """Get or create Gemini service instance (lazy initialization)."""
+    global _gemini_service_instance
+    if _gemini_service_instance is None:
+        _gemini_service_instance = GeminiService()
+    return _gemini_service_instance
+
+# For backward compatibility - use a class that acts like the service
+class GeminiServiceProxy:
+    """Proxy class that lazily initializes GeminiService on first access."""
+    def __getattr__(self, name):
+        return getattr(get_gemini_service(), name)
+
+gemini_service = GeminiServiceProxy()

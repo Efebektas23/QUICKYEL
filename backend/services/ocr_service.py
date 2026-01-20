@@ -232,5 +232,21 @@ class OCRService:
             raise
 
 
-# Singleton instance
-ocr_service = OCRService()
+# Lazy initialization - service will be created on first use
+# This ensures Google credentials are set up before service initialization
+_ocr_service_instance = None
+
+def get_ocr_service() -> OCRService:
+    """Get or create OCR service instance (lazy initialization)."""
+    global _ocr_service_instance
+    if _ocr_service_instance is None:
+        _ocr_service_instance = OCRService()
+    return _ocr_service_instance
+
+# For backward compatibility - use a class that acts like the service
+class OCRServiceProxy:
+    """Proxy class that lazily initializes OCRService on first access."""
+    def __getattr__(self, name):
+        return getattr(get_ocr_service(), name)
+
+ocr_service = OCRServiceProxy()

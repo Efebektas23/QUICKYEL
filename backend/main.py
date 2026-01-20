@@ -43,6 +43,23 @@ async def lifespan(app: FastAPI):
     await init_db()
     logger.info("Database initialized")
     
+    # Pre-initialize Google services after credentials are set up
+    # This ensures services are ready and any errors are caught early
+    try:
+        from services.ocr_service import get_ocr_service
+        from services.gemini_service import get_gemini_service
+        from services.storage_service import get_storage_service
+        
+        # Initialize services (lazy initialization will create them)
+        ocr_svc = get_ocr_service()
+        gemini_svc = get_gemini_service()
+        storage_svc = get_storage_service()
+        
+        logger.info("Google services initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize Google services: {str(e)}")
+        logger.warning("Services will be initialized on first use (lazy initialization)")
+    
     yield
     
     # Shutdown
