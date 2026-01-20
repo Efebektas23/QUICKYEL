@@ -8,6 +8,7 @@ sqlalchemy==2.0.25
 asyncpg==0.29.0
 alembic==1.13.1
 psycopg2-binary==2.9.9
+aiosqlite==0.19.0  # SQLite async driver (for local development fallback)
 
 # Google Cloud - Native Stack (muhtar-5ab9b project)
 google-cloud-vision==3.5.0
