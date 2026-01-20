@@ -14,12 +14,14 @@ RUN npm ci
 FROM base AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
-COPY . .
 
 # Build arguments for Next.js public environment variables
-# These are embedded at build time
+# These must be defined BEFORE COPY to ensure cache invalidation
 ARG NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+
+# Copy source code AFTER ARG/ENV to ensure environment variables are available
+COPY . .
 
 # Build the application
 ENV NEXT_TELEMETRY_DISABLED 1
