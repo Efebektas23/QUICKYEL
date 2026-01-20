@@ -15,6 +15,11 @@ FROM base AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 
+# Cache Buster - Forces Docker to rebuild from this point
+# Change CACHEBUST value in Railway to force full rebuild
+ARG CACHEBUST=1
+RUN echo "Cache bust: $CACHEBUST"
+
 # Build arguments for Next.js public environment variables
 # These must be defined BEFORE COPY to ensure cache invalidation
 ARG NEXT_PUBLIC_API_URL
