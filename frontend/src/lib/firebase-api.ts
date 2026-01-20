@@ -318,7 +318,9 @@ export const expensesApi = {
     try {
       // 3. Send to backend for OCR + Gemini processing (with all image URLs)
       console.log("🤖 Sending to backend for processing...");
-      const response = await fetch("http://localhost:8000/api/process-receipt/", {
+      // Use centralized API URL from runtime-config
+      const { API_URL } = await import("./runtime-config");
+      const response = await fetch(`${API_URL}/api/process-receipt/`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -416,7 +418,9 @@ export const expensesApi = {
     try {
       // 3. Send to backend for OCR + Gemini processing
       console.log("🤖 Sending to backend for processing...");
-      const response = await fetch("http://localhost:8000/api/process-receipt/", {
+      // Use centralized API URL from runtime-config
+      const { API_URL } = await import("./runtime-config");
+      const response = await fetch(`${API_URL}/api/process-receipt/`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
