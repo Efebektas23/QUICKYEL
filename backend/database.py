@@ -67,26 +67,42 @@ if "sqlite" in DATABASE_URL:
 else:
     # PostgreSQL connection pool settings
     # Railway PostgreSQL connections may need SSL configuration
+    # Always initialize connect_args as a dict (never None)
     connect_args = {}
+    
     if "railway" in DATABASE_URL.lower():
         # Railway uses self-signed certificates, disable SSL verification for internal connections
         # asyncpg SSL mode: 'disable', 'allow', 'prefer', 'require', 'verify-ca', 'verify-full'
-        connect_args = {
-            "ssl": "prefer"  # Prefer SSL but don't require strict verification for Railway
-        }
+        connect_args["ssl"] = "prefer"  # Prefer SSL but don't require strict verification for Railway
+        logger.info("Railway PostgreSQL detected - using SSL prefer mode")
+    elif "ssl" in DATABASE_URL.lower() or "sslmode" in DATABASE_URL.lower():
+        # URL already contains SSL parameters, let asyncpg handle it
+        logger.info("SSL parameters detected in DATABASE_URL")
+    else:
+        # No SSL configuration needed, use empty dict
+        logger.info("No SSL configuration required")
     
-    engine = create_async_engine(
-        DATABASE_URL,
-        echo=settings.debug,
-        future=True,
-        pool_pre_ping=True,  # Reconnect if connection is dead (important for Railway)
-        pool_size=5,  # Maintain 5 connections
-        max_overflow=10,  # Allow up to 10 additional connections
-        pool_timeout=30,  # Wait 30 seconds for a connection
-        pool_recycle=3600,  # Recycle connections after 1 hour
-        connect_args=connect_args if connect_args else None,
-    )
-    logger.info(f"PostgreSQL engine created with connection pooling (SSL: {connect_args.get('ssl', 'default') if connect_args else 'default'})")
+    # Ensure connect_args is always a dict (never None)
+    # SQLAlchemy requires connect_args to be a dict or omitted entirely
+    engine_kwargs = {
+        "url": DATABASE_URL,
+        "echo": settings.debug,
+        "future": True,
+        "pool_pre_ping": True,  # Reconnect if connection is dead (important for Railway)
+        "pool_size": 5,  # Maintain 5 connections
+        "max_overflow": 10,  # Allow up to 10 additional connections
+        "pool_timeout": 30,  # Wait 30 seconds for a connection
+        "pool_recycle": 3600,  # Recycle connections after 1 hour
+    }
+    
+    # Only add connect_args if it's not empty (SQLAlchemy handles empty dict, but cleaner to omit)
+    if connect_args:
+        engine_kwargs["connect_args"] = connect_args
+    
+    engine = create_async_engine(**engine_kwargs)
+    
+    ssl_mode = connect_args.get("ssl", "default") if connect_args else "default"
+    logger.info(f"PostgreSQL engine created with connection pooling (SSL: {ssl_mode})")
 
 AsyncSessionLocal = async_sessionmaker(
     engine,
