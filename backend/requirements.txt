@@ -14,6 +14,7 @@ aiosqlite==0.19.0  # SQLite async driver (for local development fallback)
 google-cloud-vision==3.5.0
 google-cloud-storage==2.14.0
 google-cloud-aiplatform==1.42.1  # Vertex AI SDK for Gemini
+google-generativeai==0.3.2  # Google Gemini API client
 
 # HTTP Client
 httpx==0.26.0
