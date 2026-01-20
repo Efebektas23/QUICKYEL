@@ -32,6 +32,7 @@ quickyel.db
 !postcss.config.js
 !tailwind.config.ts
 !*.config.json
+!railway.json
 firebase-admin-key.json
 google-cloud-vision-key.json
 *-firebase-adminsdk-*.json
