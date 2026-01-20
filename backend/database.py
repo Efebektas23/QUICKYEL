@@ -13,6 +13,16 @@ logger = logging.getLogger(__name__)
 # SQLAlchemy async needs: postgresql+asyncpg://user:pass@host:port/dbname
 database_url = settings.database_url
 
+# Railway Internal URL Detection
+# Railway provides both internal and public URLs
+# Internal URLs are required for service-to-service communication
+# Internal URL format: postgresql://...@containers-XXX.railway.app:5432/...
+# Public URL format: postgresql://...@public.containers-XXX.railway.app:5432/...
+if database_url and "public.containers" in database_url:
+    logger.warning("⚠️ WARNING: Using PUBLIC database URL. This may cause connection issues!")
+    logger.warning("⚠️ Please use INTERNAL URL from PostgreSQL service Variables tab.")
+    logger.warning("⚠️ Internal URL format: postgresql://...@containers-XXX.railway.app:5432/...")
+
 # Check if PostgreSQL URL is provided
 if database_url and "postgresql://" in database_url:
     # Convert postgresql:// to postgresql+asyncpg:// for async SQLAlchemy
