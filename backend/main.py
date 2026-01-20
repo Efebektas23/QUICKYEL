@@ -25,10 +25,20 @@ async def lifespan(app: FastAPI):
     """Application lifespan handler."""
     # Startup
     logger.info("Starting QuickYel API - Google Native Stack")
+    
+    # Setup Google Cloud credentials (for Railway deployment)
+    from config import setup_google_credentials
+    creds_path = setup_google_credentials()
+    if creds_path:
+        logger.info(f"Google Cloud credentials configured: {creds_path}")
+    else:
+        logger.warning("Google Cloud credentials not configured")
+    
     logger.info(f"Project: {settings.google_cloud_project}")
     logger.info(f"GCS Bucket: {settings.gcs_bucket_name}")
     logger.info(f"Gemini API: {'Configured' if settings.gemini_api_key else 'NOT CONFIGURED'}")
     logger.info(f"Vision Monthly Limit: {settings.vision_monthly_limit}")
+    logger.info(f"CORS Origins: {settings.cors_origins_list}")
     
     await init_db()
     logger.info("Database initialized")

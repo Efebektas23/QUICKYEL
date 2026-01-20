@@ -5,6 +5,7 @@ from typing import List, Optional
 import os
 import json
 import tempfile
+import logging
 
 
 class Settings(BaseSettings):
@@ -51,26 +52,43 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
-# Handle Google Cloud credentials for Railway deployment
-# Railway doesn't have a file system, so we use environment variable with JSON content
-if settings.google_application_credentials_json:
-    # Create temporary file with credentials JSON
-    try:
-        credentials_data = json.loads(settings.google_application_credentials_json)
-        temp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
-        json.dump(credentials_data, temp_file)
-        temp_file.close()
-        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = temp_file.name
-        print(f"Created temporary credentials file: {temp_file.name}")
-    except json.JSONDecodeError as e:
-        print(f"Warning: Failed to parse GOOGLE_APPLICATION_CREDENTIALS_JSON: {e}")
-        # Fallback to file path if JSON parsing fails
-        if settings.google_application_credentials:
-            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = settings.google_application_credentials
-    except Exception as e:
-        print(f"Warning: Failed to create credentials file: {e}")
-        if settings.google_application_credentials:
-            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = settings.google_application_credentials
-elif settings.google_application_credentials:
-    # Use file path (local development)
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = settings.google_application_credentials
+
+def setup_google_credentials():
+    """
+    Setup Google Cloud credentials for Railway deployment.
+    
+    Railway doesn't have a file system, so we use environment variable with JSON content.
+    This function creates a temporary file from JSON string and sets GOOGLE_APPLICATION_CREDENTIALS.
+    Should be called during application startup.
+    """
+    if settings.google_application_credentials_json:
+        # Create temporary file with credentials JSON
+        try:
+            credentials_data = json.loads(settings.google_application_credentials_json)
+            # Use tempfile for secure temporary file creation
+            temp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
+            json.dump(credentials_data, temp_file, indent=2)
+            temp_file.close()
+            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = temp_file.name
+            logger = logging.getLogger(__name__)
+            logger.info(f"Created temporary Google Cloud credentials file: {temp_file.name}")
+            return temp_file.name
+        except json.JSONDecodeError as e:
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Failed to parse GOOGLE_APPLICATION_CREDENTIALS_JSON: {e}")
+            # Fallback to file path if JSON parsing fails
+            if settings.google_application_credentials:
+                os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = settings.google_application_credentials
+                return settings.google_application_credentials
+        except Exception as e:
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Failed to create credentials file: {e}")
+            if settings.google_application_credentials:
+                os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = settings.google_application_credentials
+                return settings.google_application_credentials
+    elif settings.google_application_credentials:
+        # Use file path (local development)
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = settings.google_application_credentials
+        return settings.google_application_credentials
+    
+    return None

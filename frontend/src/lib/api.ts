@@ -1,6 +1,8 @@
 import axios from "axios";
+import { API_URL } from "./runtime-config";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+// API URL is now centralized in runtime-config.ts
+// This ensures consistent usage across the application
 
 export const api = axios.create({
   baseURL: `${API_URL}/api`,

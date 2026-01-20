@@ -628,7 +628,8 @@ export const revenueApi = {
     raw_text: string | null;
     confidence: number;
   }> => {
-    const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    // Import centralized API URL configuration
+    const { API_URL } = await import("./runtime-config");
     const url = `${API_URL}/api/process-rate-confirmation/`;
     
     console.log("🌐 Calling backend API:", url);
