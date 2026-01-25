@@ -8,11 +8,11 @@ import { motion, AnimatePresence } from "framer-motion";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard" },
-  { href: "/upload", label: "Fiş Yükle" },
-  { href: "/expenses", label: "Giderler" },
-  { href: "/revenue", label: "Gelirler" },
-  { href: "/cards", label: "Kartlar" },
-  { href: "/export", label: "Dışa Aktar" },
+  { href: "/upload", label: "Upload Receipt" },
+  { href: "/expenses", label: "Expenses" },
+  { href: "/revenue", label: "Revenue" },
+  { href: "/cards", label: "Cards" },
+  { href: "/export", label: "Export" },
 ];
 
 export function Header() {

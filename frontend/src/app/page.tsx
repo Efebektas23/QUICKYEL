@@ -7,7 +7,7 @@ export default function HomePage() {
   const router = useRouter();
 
   useEffect(() => {
-    // Doğrudan dashboard'a yönlendir - kapalı devre sistem
+    // Redirect directly to dashboard - closed system
     router.replace("/dashboard");
   }, [router]);
 

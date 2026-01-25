@@ -171,13 +171,13 @@ export default function UploadPage() {
                 <div className="mb-6">
                   <div className="flex items-center justify-between mb-3">
                     <span className="text-sm text-slate-400">
-                      {selectedFiles.length} görsel seçildi
+                      {selectedFiles.length} image(s) selected
                     </span>
                     <button
                       onClick={reset}
                       className="text-sm text-red-400 hover:text-red-300"
                     >
-                      Tümünü Sil
+                      Clear All
                     </button>
                   </div>
                   <div className="grid grid-cols-3 sm:grid-cols-5 gap-3">
@@ -246,14 +246,14 @@ export default function UploadPage() {
                     <div>
                       <p className="text-lg font-medium text-white mb-1">
                         {isDragActive
-                          ? "Fişleri buraya bırak"
-                          : "Fiş görsellerini sürükle & bırak"}
+                          ? "Drop receipts here"
+                          : "Drag & drop receipt images"}
                       </p>
                       <p className="text-slate-500">
-                        veya tıkla • Birden fazla görsel seçebilirsin
+                        or click • You can select multiple images
                       </p>
                       <p className="text-slate-600 text-sm mt-1">
-                        JPEG, PNG, HEIC • Maks 10MB/görsel
+                        JPEG, PNG, HEIC • Max 10MB/image
                       </p>
                     </div>
                   </div>
@@ -279,7 +279,7 @@ export default function UploadPage() {
                       }}
                     >
                       <Camera className="w-5 h-5" />
-                      Fotoğraf Çek
+                      Take Photo
                     </button>
                   </div>
                 </div>
@@ -293,8 +293,8 @@ export default function UploadPage() {
                 >
                   <Upload className="w-5 h-5" />
                   {selectedFiles.length === 1
-                    ? "Fişi İşle"
-                    : `${selectedFiles.length} Görseli Birleştir ve İşle`}
+                    ? "Process Receipt"
+                    : `Merge & Process ${selectedFiles.length} Images`}
                 </button>
               )}
 
@@ -309,7 +309,7 @@ export default function UploadPage() {
                         onClick={reset}
                         className="text-sm text-red-500 hover:text-red-400 mt-1"
                       >
-                        Tekrar Dene
+                        Try Again
                       </button>
                     </div>
                   </div>
@@ -360,9 +360,9 @@ export default function UploadPage() {
               <div className="max-w-xs mx-auto mb-6">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-sm text-slate-400">
-                    {uploadState === "uploading" && "Yükleniyor..."}
-                    {uploadState === "processing" && "AI ile işleniyor..."}
-                    {uploadState === "success" && "Tamamlandı!"}
+                    {uploadState === "uploading" && "Uploading..."}
+                    {uploadState === "processing" && "Processing with AI..."}
+                    {uploadState === "success" && "Completed!"}
                   </span>
                   <span className="text-sm font-medium text-amber-500">
                     {progress}%
@@ -389,26 +389,26 @@ export default function UploadPage() {
                 >
                   <div className="flex items-center justify-center gap-2 text-emerald-500">
                     <CheckCircle className="w-5 h-5" />
-                    <span className="font-medium">Fiş işlendi!</span>
+                    <span className="font-medium">Receipt processed!</span>
                   </div>
 
                   {/* Quick Preview */}
                   <div className="p-4 rounded-xl bg-slate-800/50 text-left max-w-sm mx-auto">
                     <div className="space-y-2">
                       <div className="flex justify-between">
-                        <span className="text-slate-400">Satıcı</span>
+                        <span className="text-slate-400">Vendor</span>
                         <span className="text-white font-medium">
-                          {processedExpense.vendor_name || "Bilinmiyor"}
+                          {processedExpense.vendor_name || "Unknown"}
                         </span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-slate-400">Tutar</span>
+                        <span className="text-slate-400">Amount</span>
                         <span className="text-white font-medium">
                           {formatCurrency(processedExpense.cad_amount)}
                         </span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-slate-400">Kategori</span>
+                        <span className="text-slate-400">Category</span>
                         <span className="text-white font-medium">
                           {categoryLabels[processedExpense.category] ||
                             processedExpense.category}
@@ -420,13 +420,13 @@ export default function UploadPage() {
                   <div className="flex items-center justify-center gap-3">
                     <button onClick={reset} className="btn-ghost">
                       <RotateCcw className="w-4 h-4" />
-                      Yeni Fiş Yükle
+                      Upload New Receipt
                     </button>
                     <button
                       onClick={() => setShowReviewModal(true)}
                       className="btn-primary"
                     >
-                      İncele & Onayla
+                      Review & Approve
                       <ArrowRight className="w-4 h-4" />
                     </button>
                   </div>
@@ -439,23 +439,23 @@ export default function UploadPage() {
 
       {/* Tips */}
       <div className="mt-8 p-6 rounded-2xl bg-slate-800/30 border border-slate-800">
-        <h3 className="font-semibold text-white mb-3">İpuçları</h3>
+        <h3 className="font-semibold text-white mb-3">Tips</h3>
         <ul className="space-y-2 text-slate-400 text-sm">
           <li className="flex items-start gap-2">
             <span className="text-amber-500">•</span>
-            Uzun fişler için birden fazla parça halinde fotoğraf çekebilirsin
+            For long receipts, you can take multiple photos in parts
           </li>
           <li className="flex items-start gap-2">
             <span className="text-amber-500">•</span>
-            Görsellerin sırasına dikkat et (üstten alta)
+            Pay attention to image order (top to bottom)
           </li>
           <li className="flex items-start gap-2">
             <span className="text-amber-500">•</span>
-            Işık ve netlik kalitesi önemli
+            Light and clarity quality is important
           </li>
           <li className="flex items-start gap-2">
             <span className="text-amber-500">•</span>
-            Toplam ve tarih mutlaka görünür olmalı
+            Total and date must be clearly visible
           </li>
         </ul>
       </div>

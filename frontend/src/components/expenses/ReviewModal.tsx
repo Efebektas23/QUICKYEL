@@ -248,13 +248,13 @@ export function ReviewModal({
                   <div className="space-y-4">
                     <div className="p-3 rounded-lg bg-slate-800/50 border border-slate-700">
                       <p className="text-xs text-slate-400 mb-3">
-                        💡 Vergi türlerini ayrı ayrı girin. HST = GST+PST birleşik olduğu eyaletler için (ON, NB, NS, NL, PE)
+                        💡 Enter tax types separately. HST = combined GST+PST for provinces (ON, NB, NS, NL, PE)
                       </p>
                       
                       {/* GST */}
                       <div className="mb-3">
                         <label className="flex items-center gap-2 text-sm font-medium text-slate-300 mb-1">
-                          GST (5%) - Federal Vergi
+                          GST (5%) - Federal Tax
                         </label>
                         <input
                           type="number"
@@ -263,13 +263,13 @@ export function ReviewModal({
                           className="input-field"
                           placeholder="0.00"
                         />
-                        <p className="text-xs text-emerald-500 mt-0.5">ITC ile geri alınabilir</p>
+                        <p className="text-xs text-emerald-500 mt-0.5">Recoverable via ITC</p>
                       </div>
                       
                       {/* HST */}
                       <div className="mb-3">
                         <label className="flex items-center gap-2 text-sm font-medium text-slate-300 mb-1">
-                          HST (13-15%) - Harmonize Vergi
+                          HST (13-15%) - Harmonized Tax
                         </label>
                         <input
                           type="number"
@@ -278,13 +278,13 @@ export function ReviewModal({
                           className="input-field"
                           placeholder="0.00"
                         />
-                        <p className="text-xs text-emerald-500 mt-0.5">ITC ile geri alınabilir (ON, NB, NS, NL, PE)</p>
+                        <p className="text-xs text-emerald-500 mt-0.5">Recoverable via ITC (ON, NB, NS, NL, PE)</p>
                       </div>
                       
                       {/* PST */}
                       <div>
                         <label className="flex items-center gap-2 text-sm font-medium text-slate-300 mb-1">
-                          PST/QST (6-10%) - Eyalet Vergisi
+                          PST/QST (6-10%) - Provincial Tax
                         </label>
                         <input
                           type="number"
@@ -293,13 +293,13 @@ export function ReviewModal({
                           className="input-field"
                           placeholder="0.00"
                         />
-                        <p className="text-xs text-orange-400 mt-0.5">Geri alınamaz (BC, MB, SK, QC)</p>
+                        <p className="text-xs text-orange-400 mt-0.5">Not recoverable (BC, MB, SK, QC)</p>
                       </div>
                     </div>
                     
                     {/* Total Tax Display */}
                     <div className="flex justify-between items-center p-2 rounded bg-slate-800/30">
-                      <span className="text-sm text-slate-400">Toplam Vergi:</span>
+                      <span className="text-sm text-slate-400">Total Tax:</span>
                       <span className="text-sm font-semibold text-white">
                         ${((watch("gst_amount") || 0) + (watch("hst_amount") || 0) + (watch("pst_amount") || 0)).toFixed(2)}
                       </span>

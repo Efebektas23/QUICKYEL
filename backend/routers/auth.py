@@ -53,15 +53,15 @@ async def get_current_user(
     db: AsyncSession = Depends(get_db)
 ) -> User:
     """
-    Kapalı devre sistem - auth bypass edildi.
-    Varsayılan sistem kullanıcısını döndürür veya oluşturur.
+    Closed system - auth bypassed.
+    Returns or creates the default system user.
     """
-    # Varsayılan kullanıcıyı bul veya oluştur
+    # Find or create default user
     result = await db.execute(select(User).where(User.email == "system@quickyel.local"))
     user = result.scalar_one_or_none()
     
     if user is None:
-        # Sistem kullanıcısı yoksa oluştur
+        # Create system user if it doesn't exist
         user = User(
             email="system@quickyel.local",
             hashed_password=get_password_hash("system123"),

@@ -203,7 +203,7 @@ export default function DashboardPage() {
           icon={<Calculator className="w-5 h-5" />}
           color="cyan"
           loading={summaryLoading}
-          tooltip="Bu tutar vergi matrahınızdan düşülecek. Yemek harcamaları %50, kategorisiz olanlar %0 olarak hesaplanır."
+          tooltip="This amount will be deducted from your tax base. Meal expenses are calculated at 50%, uncategorized ones at 0%."
         />
         <StatCard
           title="Due to Shareholder"

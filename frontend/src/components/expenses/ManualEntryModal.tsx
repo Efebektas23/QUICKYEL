@@ -255,11 +255,11 @@ export function ManualEntryModal({ isOpen, onClose, onSuccess }: ManualEntryModa
                 ))}
               </select>
               
-              {/* Turkish Tooltip */}
+              {/* Category Tooltip */}
               {selectedCategory && (
                 <div className="mt-2 flex items-start gap-2 p-3 bg-slate-800/50 rounded-lg border border-slate-700">
                   <Info className="w-4 h-4 text-blue-400 mt-0.5 flex-shrink-0" />
-                  <p className="text-sm text-slate-400">{selectedCategory.tooltipTr}</p>
+                  <p className="text-sm text-slate-400">{selectedCategory.tooltip}</p>
                 </div>
               )}
 

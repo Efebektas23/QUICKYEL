@@ -11,7 +11,7 @@ export const api = axios.create({
   },
 });
 
-// Kapalı devre sistem - auth interceptor kaldırıldı
+// Closed system - auth interceptor removed
 
 // Expenses API
 export const expensesApi = {

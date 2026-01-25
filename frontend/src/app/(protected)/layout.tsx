@@ -7,7 +7,7 @@ export default function ProtectedLayout({
 }: {
   children: React.ReactNode;
 }) {
-  // Kapalı devre sistem - auth kontrolü yok
+  // Closed system - no auth check
   return (
     <div className="min-h-screen bg-slate-950">
       <Header />

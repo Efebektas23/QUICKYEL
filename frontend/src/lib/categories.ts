@@ -1,13 +1,13 @@
 /**
  * Expense Categories Configuration
  * Aligned with CRA T2125 Business Income Statement
- * Includes Turkish tooltips for user guidance
+ * Includes tooltips for user guidance
  */
 
 export interface CategoryConfig {
   id: string;
   label: string;
-  tooltipTr: string;  // Turkish explanation
+  tooltip: string;  // English explanation
   deductionRate: number;  // 0.0 to 1.0 (CRA deduction percentage)
   icon: string;  // Lucide icon name
   color: string;  // Tailwind color
@@ -17,7 +17,7 @@ export const EXPENSE_CATEGORIES: CategoryConfig[] = [
   {
     id: "fuel",
     label: "Fuel",
-    tooltipTr: "Mazot (Diesel), AdBlue ve araç yakıt harcamaları.",
+    tooltip: "Diesel, AdBlue, and vehicle fuel expenses.",
     deductionRate: 1.0,
     icon: "Fuel",
     color: "orange",
@@ -25,7 +25,7 @@ export const EXPENSE_CATEGORIES: CategoryConfig[] = [
   {
     id: "maintenance_repairs",
     label: "Maintenance & Repairs",
-    tooltipTr: "Tamir, yedek parça, lastik, yağ değişimi ve servis giderleri.",
+    tooltip: "Repairs, parts, tires, oil changes, and service expenses.",
     deductionRate: 1.0,
     icon: "Wrench",
     color: "blue",
@@ -33,7 +33,7 @@ export const EXPENSE_CATEGORIES: CategoryConfig[] = [
   {
     id: "insurance",
     label: "Insurance",
-    tooltipTr: "Kamyon sigortası (Cargo/Liability), işletme ve kaza sigortaları.",
+    tooltip: "Truck insurance (Cargo/Liability), business and accident insurance.",
     deductionRate: 1.0,
     icon: "Shield",
     color: "indigo",
@@ -41,7 +41,7 @@ export const EXPENSE_CATEGORIES: CategoryConfig[] = [
   {
     id: "licenses_dues",
     label: "Licenses & Dues",
-    tooltipTr: "IFTA ödemeleri, D.O.T. kayıtları, plaka harçları ve mesleki üyelikler.",
+    tooltip: "IFTA payments, D.O.T. registrations, plate fees, and professional memberships.",
     deductionRate: 1.0,
     icon: "FileText",
     color: "slate",
@@ -49,7 +49,7 @@ export const EXPENSE_CATEGORIES: CategoryConfig[] = [
   {
     id: "tolls_scales",
     label: "Tolls & Scales",
-    tooltipTr: "Otoban, köprü, kantar (Scales) ve gümrük (Customs/Border) geçiş ücretleri.",
+    tooltip: "Highway, bridge, scale, and customs/border crossing fees.",
     deductionRate: 1.0,
     icon: "CircleDollarSign",
     color: "emerald",
@@ -57,7 +57,7 @@ export const EXPENSE_CATEGORIES: CategoryConfig[] = [
   {
     id: "meals_entertainment",
     label: "Meals & Entertainment",
-    tooltipTr: "İş seyahatindeki yemek ve market harcamaları (CRA %50 kuralı uygular).",
+    tooltip: "Meals and grocery expenses during business travel (CRA applies 50% rule).",
     deductionRate: 0.5,  // CRA 50% rule
     icon: "UtensilsCrossed",
     color: "pink",
@@ -65,7 +65,7 @@ export const EXPENSE_CATEGORIES: CategoryConfig[] = [
   {
     id: "travel_lodging",
     label: "Travel (Lodging)",
-    tooltipTr: "Yoldaki otel, motel ve konaklama masrafları.",
+    tooltip: "Hotel, motel, and accommodation expenses on the road.",
     deductionRate: 1.0,
     icon: "Bed",
     color: "purple",
@@ -73,7 +73,7 @@ export const EXPENSE_CATEGORIES: CategoryConfig[] = [
   {
     id: "office_admin",
     label: "Office & Admin",
-    tooltipTr: "Banka masrafları, telefon, internet, kırtasiye ve yazılım abonelikleri.",
+    tooltip: "Bank fees, phone, internet, office supplies, and software subscriptions.",
     deductionRate: 1.0,
     icon: "Building2",
     color: "cyan",
@@ -81,7 +81,7 @@ export const EXPENSE_CATEGORIES: CategoryConfig[] = [
   {
     id: "other_expenses",
     label: "Other Expenses",
-    tooltipTr: "Yukarıdakilere girmeyen, işle doğrudan ilgili diğer harcamalar.",
+    tooltip: "Other business-related expenses that don't fit the above categories.",
     deductionRate: 1.0,
     icon: "MoreHorizontal",
     color: "gray",
@@ -89,7 +89,7 @@ export const EXPENSE_CATEGORIES: CategoryConfig[] = [
   {
     id: "uncategorized",
     label: "Uncategorized",
-    tooltipTr: "Henüz kategorize edilmemiş harcamalar. Vergi indirimi için kategorize edin!",
+    tooltip: "Expenses not yet categorized. Categorize them for tax deductions!",
     deductionRate: 0.0,  // Safety default
     icon: "HelpCircle",
     color: "slate",
@@ -107,10 +107,10 @@ export const getCategoryLabel = (id: string): string => {
   return cat?.label || id.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase());
 };
 
-// Helper to get Turkish tooltip
+// Helper to get category tooltip
 export const getCategoryTooltip = (id: string): string => {
   const cat = getCategoryById(id);
-  return cat?.tooltipTr || "";
+  return cat?.tooltip || "";
 };
 
 // Helper to get deduction rate
