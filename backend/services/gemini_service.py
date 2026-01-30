@@ -19,24 +19,39 @@ class GeminiService:
     Uses Google AI SDK (simpler than Vertex AI).
     """
     
-    SYSTEM_PROMPT = """You are an expert accountant for a Canadian logistics company. 
-From the provided raw receipt text, extract the following information and return ONLY valid JSON.
+    SYSTEM_PROMPT = """You are an expert accountant for a Canadian logistics/trucking company. 
+From the provided document text (receipt OR invoice), extract the following information and return ONLY valid JSON.
+
+DOCUMENT TYPES YOU WILL SEE:
+- Store receipts (supermarkets, gas stations, restaurants)
+- Service invoices (medical tests, repairs, professional services)
+- Government/permit invoices
+- Utility bills
+- Any business expense document
 
 EXTRACTION RULES:
 
-1. VENDOR NAME: Extract the business/store name from the receipt header.
+1. VENDOR NAME: Extract the business/company name. Look for:
+   - Receipt header (store name)
+   - Invoice header (company name, "From:", letterhead)
+   - Look for Inc., Ltd., LLC, Corp., ULC after names
 
-2. DATE: Find the MAIN TRANSACTION DATE (not "Printed on" date). Look for the date at the TOP of the receipt near the vendor name. Format as YYYY-MM-DD. IMPORTANT: Ignore any "Printed on", "Print Date", or footer dates - use only the primary purchase/transaction date.
+2. DATE: Find the MAIN TRANSACTION/INVOICE DATE. Format as YYYY-MM-DD.
+   - For receipts: Date near the top, NOT "Printed on" date
+   - For invoices: "Invoice Date", "Date", "Billing Date" - usually near invoice number
+   - IMPORTANT: Ignore footer dates, "Amount Payable if Paid After" dates
 
 3. JURISDICTION & PROVINCE DETECTION (CRITICAL):
    - "usa": US state abbreviations (TX, CA, OH), ZIP codes (5 digits), US phone format, "Sales Tax"
    - "canada": Canadian provinces, postal codes (A1A 1A1), tax labels GST/HST/PST
    - Look for address patterns, phone formats, and tax labels
-   - Extract the PROVINCE code if in Canada (ON, BC, AB, SK, MB, QC, NB, NS, NL, PE, NT, NU, YT)
+   - Extract the PROVINCE code from the vendor's address (ON, BC, AB, SK, MB, QC, NB, NS, NL, PE, NT, NU, YT)
+   - Common patterns: "City, ON A1A 1A1" or "City, Ontario"
 
 4. CURRENCY:
    - If jurisdiction is "usa" → currency is "USD"
    - If jurisdiction is "canada" → currency is "CAD"
+   - Look for explicit "Currency: CAD/USD" on invoices
 
 5. TAX EXTRACTION (CRITICAL - Extract GST, HST, PST SEPARATELY):
    Canadian Tax Rules by Province:
@@ -61,30 +76,33 @@ EXTRACTION RULES:
    
    QUEBEC (QC): GST 5% + QST 9.975% - Extract QST as pst_amount
    
-   EXTRACTION LOGIC:
-   * If receipt shows "HST" → put in hst_amount, set gst_amount=0
-   * If receipt shows "GST" only → put in gst_amount, set hst_amount=0
-   * If receipt shows "GST" + "PST" separately → extract both
-   * If receipt shows "GST" + "QST" → put QST in pst_amount
-   * Look for labels: "GST", "G.S.T.", "HST", "H.S.T.", "PST", "P.S.T.", "QST", "Q.S.T.", "TVQ"
+   IMPORTANT FOR INVOICES: 
+   - Even if vendor is in Ontario (HST province), they may show "GST (5%)" separately
+   - If invoice shows "GST 5%" → put in gst_amount (this is common for certain services)
+   - If invoice shows "HST 13%" → put in hst_amount
+   - Look for: "GST", "G.S.T.", "HST", "H.S.T.", "PST", "P.S.T.", "QST", "Tax"
    
    For USA: Set all tax amounts to 0 (US sales tax is NOT recoverable for Canadian businesses)
 
-6. CATEGORY (map to exactly one - CRA T2125 compliant):
+6. CATEGORY (map to exactly one - CRA T2125 compliant for trucking):
    - "fuel": Diesel, DEF, Pump, Gas, Fuel, Unleaded, Premium, Petro-Canada, Shell, Esso, Love's, Flying J, Pilot
-   - "maintenance_repairs": Service, Parts, Tire, Mechanic, Oil Change, Repair, Lube, Canadian Tire, AutoZone
+   - "maintenance_repairs": Service, Parts, Tire, Mechanic, Oil Change, Repair, Lube, Canadian Tire, AutoZone, Body Shop
    - "insurance": Insurance Premium, Cargo Insurance, Liability, Intact, TD Insurance, Northbridge, Travelers
-   - "licenses_dues": Govt, Permit, IFTA, License, Registration, MTO, DOT, Government, Membership, Dues
+   - "licenses_dues": Government, Permit, IFTA, License, Registration, MTO, DOT, Membership, Dues, Medical Test, DriverCheck, Drug Test, Physical Exam, Driver Medical, Commercial License, Safety Certificate, Inspection
    - "tolls_scales": CAT Scale, E-ZPass, Toll, Bridge, Parking, Weigh, 407 ETR, Customs, Border
    - "meals_entertainment": Restaurant, Drive-thru, Cafe, Tim Hortons, McDonald's, Subway, Coffee, Market, Grocery, Meat, Food, Supermarket, Deli, Bakery, Pizza, Burger, Chicken, A&W, Wendy's, KFC, Popeyes, Starbucks, Dunkin
    - "travel_lodging": Hotel, Motel, Inn, Lodge, Stay, Room, Hampton, Holiday Inn, Best Western, Comfort Inn
    - "office_admin": Bank Fee, Software, Subscription, Supplies, Staples, Office Depot, Amazon, Best Buy, Phone, Internet
-   - "other_expenses": Other business-related expenses that don't fit above categories
+   - "other_expenses": Professional services, consulting, legal, accounting, other business expenses
    - "uncategorized": ONLY if none of the above match - try hard to categorize!
 
 7. CARD LAST 4: Look for patterns like "****1234", "VISA 5678", "MC 9012", "Card: XXXX1234"
+   - For invoices, this may not be present (payment pending) - return null
 
-8. TOTAL AMOUNT: Find the final total (after tax). Look for "Total", "Amount Due", "Grand Total".
+8. TOTAL AMOUNT: Find the final total (after tax). Look for:
+   - Receipts: "Total", "Grand Total", "Amount Due"
+   - Invoices: "Total Due", "Amount Due", "Invoice Total", "Balance Due"
+   - NOT "Subtotal" - get the FINAL amount including tax
 
 RESPOND WITH ONLY THIS JSON (no markdown, no explanation):
 {
@@ -139,13 +157,14 @@ RESPOND WITH ONLY THIS JSON (no markdown, no explanation):
         try:
             prompt = f"""{self.SYSTEM_PROMPT}
 
-RAW RECEIPT TEXT:
+RAW DOCUMENT TEXT (receipt or invoice):
 \"\"\"
 {ocr_text}
 \"\"\"
 
 EXTRACT AND RETURN JSON:"""
 
+            logger.info(f"Sending OCR text to Gemini ({len(ocr_text)} chars)")
             response = self.model.generate_content(prompt)
             
             content = response.text.strip()

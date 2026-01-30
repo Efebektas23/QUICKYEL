@@ -23,7 +23,7 @@ class ProcessReceiptRequest(BaseModel):
 
 
 class ProcessReceiptResponse(BaseModel):
-    """Response with parsed receipt data."""
+    """Response with parsed receipt/invoice data."""
     expense_id: str
     vendor_name: Optional[str] = None
     transaction_date: Optional[str] = None
@@ -32,8 +32,9 @@ class ProcessReceiptResponse(BaseModel):
     total_amount: Optional[float] = None
     currency: str = "CAD"
     tax_amount: float = 0.0
-    gst_amount: float = 0.0  # GST/HST only (ITC recoverable)
-    pst_amount: float = 0.0  # PST only (not recoverable)
+    gst_amount: float = 0.0  # GST only (5%) - ITC recoverable
+    hst_amount: float = 0.0  # HST only (13-15%) - ITC recoverable
+    pst_amount: float = 0.0  # PST only (6-10%) - NOT recoverable
     exchange_rate: float = 1.0
     cad_amount: Optional[float] = None
     card_last_4: Optional[str] = None
@@ -62,7 +63,7 @@ async def process_receipt(request: ProcessReceiptRequest):
         
         # Step 1 & 2: Download and OCR all images
         all_ocr_text = []
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=60.0) as client:  # Increased timeout for larger invoice images
             for i, url in enumerate(image_urls):
                 logger.info(f"Downloading image {i+1}/{len(image_urls)}")
                 response = await client.get(url)
@@ -121,6 +122,7 @@ async def process_receipt(request: ProcessReceiptRequest):
             currency=currency,
             tax_amount=parsed_data.tax_amount or 0.0,
             gst_amount=parsed_data.gst_amount or 0.0,
+            hst_amount=parsed_data.hst_amount or 0.0,
             pst_amount=parsed_data.pst_amount or 0.0,
             exchange_rate=exchange_rate,
             cad_amount=cad_amount,
