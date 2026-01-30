@@ -24,8 +24,8 @@ class Settings(BaseSettings):
     # Firebase Admin (for backend operations)
     firebase_admin_credentials: str = "./firebase-admin-key.json"
     
-    # Gemini API Key
-    gemini_api_key: str = "AIzaSyAkpM2NjfcmgemxW8LHFJz8FM0nxELWMfQ"
+    # Gemini API Key (from environment variable - NEVER hardcode!)
+    gemini_api_key: str = ""  # Set via GEMINI_API_KEY environment variable
     
     # JWT
     jwt_secret: str = "change-this-in-production"
