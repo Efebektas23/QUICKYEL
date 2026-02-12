@@ -21,11 +21,15 @@ import {
   X,
   Eye,
   Percent,
+  AlertTriangle,
+  ShieldAlert,
+  Copy,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import {
   bankImportApi,
   factoringApi,
+  duplicateCheckApi,
   BankTransaction,
   BankImportSummary,
   FactoringEntry,
@@ -146,6 +150,9 @@ function BankImportSection() {
   const [transactions, setTransactions] = useState<BankTransaction[]>([]);
   const [summary, setSummary] = useState<BankImportSummary | null>(null);
   const [importResult, setImportResult] = useState<any>(null);
+  const [duplicateWarning, setDuplicateWarning] = useState<string | null>(null);
+  const [csvContentRef, setCsvContentRef] = useState<string | null>(null);
+  const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -157,10 +164,27 @@ function BankImportSection() {
     }
 
     setIsProcessing(true);
-    toast.loading("Parsing bank statement...", { id: "bank-parse" });
+    setDuplicateWarning(null);
+    toast.loading("Checking for duplicates...", { id: "bank-parse" });
 
     try {
       const csvContent = await file.text();
+      setCsvContentRef(csvContent);
+      setUploadedFileName(file.name);
+
+      // 1. Check file-level duplicate
+      const fileCheck = await duplicateCheckApi.checkFileHash(csvContent, "bank_csv");
+      if (fileCheck.isDuplicate) {
+        const importDate = fileCheck.importedAt
+          ? fileCheck.importedAt.toLocaleDateString("en-CA")
+          : "unknown date";
+        setDuplicateWarning(
+          `This exact CSV file was already imported on ${importDate}. Duplicate records will be automatically skipped.`
+        );
+      }
+
+      // 2. Parse CSV with AI
+      toast.loading("Parsing bank statement...", { id: "bank-parse" });
       const result = await bankImportApi.parseCSV(csvContent);
 
       // Mark all transactions as selected by default
@@ -220,13 +244,25 @@ function BankImportSection() {
       setImportResult(result);
       setStep("done");
 
+      // Register file hash after successful import
+      if (csvContentRef) {
+        await duplicateCheckApi.registerFileImport(csvContentRef, "bank_csv", {
+          filename: uploadedFileName || "unknown.csv",
+          records_count: result.expenses_created + result.revenues_created,
+        });
+      }
+
       queryClient.invalidateQueries({ queryKey: ["expenses"] });
       queryClient.invalidateQueries({ queryKey: ["revenues"] });
       queryClient.invalidateQueries({ queryKey: ["summary"] });
       queryClient.invalidateQueries({ queryKey: ["revenue-summary"] });
 
+      const dupeMsg =
+        result.duplicates_skipped > 0
+          ? ` (${result.duplicates_skipped} duplicates skipped)`
+          : "";
       toast.success(
-        `Imported ${result.expenses_created} expenses, ${result.revenues_created} revenues`,
+        `Imported ${result.expenses_created} expenses, ${result.revenues_created} revenues${dupeMsg}`,
         { id: "bank-import" }
       );
     } catch (error: any) {
@@ -241,6 +277,9 @@ function BankImportSection() {
     setTransactions([]);
     setSummary(null);
     setImportResult(null);
+    setDuplicateWarning(null);
+    setCsvContentRef(null);
+    setUploadedFileName(null);
   };
 
   if (step === "upload") {
@@ -327,6 +366,15 @@ function BankImportSection() {
               {importResult.skipped} transactions skipped (transfers/draws)
             </p>
           )}
+          {importResult?.duplicates_skipped > 0 && (
+            <div className="flex items-center justify-center gap-2 text-amber-400">
+              <ShieldAlert className="w-4 h-4" />
+              <p className="text-sm">
+                <span className="font-bold">{importResult.duplicates_skipped}</span>{" "}
+                duplicate transactions detected and skipped
+              </p>
+            </div>
+          )}
         </div>
         <button onClick={reset} className="btn-primary">
           Import Another Statement
@@ -346,6 +394,25 @@ function BankImportSection() {
 
   return (
     <div className="space-y-6">
+      {/* Duplicate Warning */}
+      {duplicateWarning && (
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="flex items-start gap-3 p-4 bg-amber-500/10 border border-amber-500/20 rounded-xl"
+        >
+          <AlertTriangle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-medium text-amber-400">
+              Duplicate File Detected
+            </p>
+            <p className="text-xs text-amber-500/70 mt-1">
+              {duplicateWarning}
+            </p>
+          </div>
+        </motion.div>
+      )}
+
       {/* Summary Cards */}
       {summary && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -554,6 +621,9 @@ function FactoringImportSection() {
   );
   const [entries, setEntries] = useState<FactoringEntry[]>([]);
   const [importResult, setImportResult] = useState<any>(null);
+  const [duplicateWarning, setDuplicateWarning] = useState<string | null>(null);
+  const [pdfContentRef, setPdfContentRef] = useState<string | null>(null);
+  const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -565,11 +635,39 @@ function FactoringImportSection() {
     }
 
     setIsProcessing(true);
-    toast.loading("AI is reading the factoring report...", {
-      id: "factoring-parse",
-    });
+    setDuplicateWarning(null);
+    toast.loading("Checking for duplicates...", { id: "factoring-parse" });
 
     try {
+      // Read file content for hashing
+      const buffer = await file.arrayBuffer();
+      const base64Content = btoa(
+        new Uint8Array(buffer).reduce(
+          (data, byte) => data + String.fromCharCode(byte),
+          ""
+        )
+      );
+      setPdfContentRef(base64Content);
+      setUploadedFileName(file.name);
+
+      // 1. Check file-level duplicate
+      const fileCheck = await duplicateCheckApi.checkFileHash(
+        base64Content,
+        "factoring_pdf"
+      );
+      if (fileCheck.isDuplicate) {
+        const importDate = fileCheck.importedAt
+          ? fileCheck.importedAt.toLocaleDateString("en-CA")
+          : "unknown date";
+        setDuplicateWarning(
+          `This exact PDF file was already imported on ${importDate}. Duplicate entries will be automatically skipped.`
+        );
+      }
+
+      // 2. Parse PDF with AI
+      toast.loading("AI is reading the factoring report...", {
+        id: "factoring-parse",
+      });
       const result = await factoringApi.parsePDF(file);
       setReportData(result);
 
@@ -626,12 +724,29 @@ function FactoringImportSection() {
       setImportResult(result);
       setStep("done");
 
+      // Register file hash after successful import
+      if (pdfContentRef) {
+        await duplicateCheckApi.registerFileImport(
+          pdfContentRef,
+          "factoring_pdf",
+          {
+            filename: uploadedFileName || "unknown.pdf",
+            records_count: result.expenses_created,
+          }
+        );
+      }
+
       queryClient.invalidateQueries({ queryKey: ["expenses"] });
       queryClient.invalidateQueries({ queryKey: ["summary"] });
 
-      toast.success(`Imported ${result.expenses_created} factoring expenses`, {
-        id: "factoring-import",
-      });
+      const dupeMsg =
+        result.duplicates_skipped > 0
+          ? ` (${result.duplicates_skipped} duplicates skipped)`
+          : "";
+      toast.success(
+        `Imported ${result.expenses_created} factoring expenses${dupeMsg}`,
+        { id: "factoring-import" }
+      );
     } catch (error: any) {
       toast.error(error.message || "Import failed", {
         id: "factoring-import",
@@ -646,6 +761,9 @@ function FactoringImportSection() {
     setReportData(null);
     setEntries([]);
     setImportResult(null);
+    setDuplicateWarning(null);
+    setPdfContentRef(null);
+    setUploadedFileName(null);
   };
 
   if (step === "upload") {
@@ -737,6 +855,15 @@ function FactoringImportSection() {
               {importResult.skipped} entries skipped (non-fee items)
             </p>
           )}
+          {importResult?.duplicates_skipped > 0 && (
+            <div className="flex items-center justify-center gap-2 text-amber-400">
+              <ShieldAlert className="w-4 h-4" />
+              <p className="text-sm">
+                <span className="font-bold">{importResult.duplicates_skipped}</span>{" "}
+                duplicate entries detected and skipped
+              </p>
+            </div>
+          )}
         </div>
         <button onClick={reset} className="btn-primary">
           Import Another Report
@@ -753,6 +880,25 @@ function FactoringImportSection() {
 
   return (
     <div className="space-y-6">
+      {/* Duplicate Warning */}
+      {duplicateWarning && (
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="flex items-start gap-3 p-4 bg-amber-500/10 border border-amber-500/20 rounded-xl"
+        >
+          <AlertTriangle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-medium text-amber-400">
+              Duplicate File Detected
+            </p>
+            <p className="text-xs text-amber-500/70 mt-1">
+              {duplicateWarning}
+            </p>
+          </div>
+        </motion.div>
+      )}
+
       {/* Report Info */}
       {reportData && (
         <div className="card p-5">

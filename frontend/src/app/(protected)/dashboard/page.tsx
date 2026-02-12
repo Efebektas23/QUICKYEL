@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import {
@@ -23,6 +23,12 @@ import {
   Shield,
   Percent,
   Users,
+  Calendar,
+  ChevronDown,
+  Building2,
+  CreditCard,
+  Landmark,
+  ArrowLeftRight,
 } from "lucide-react";
 import Link from "next/link";
 import { exportApi, expensesApi, revenueApi } from "@/lib/firebase-api";
@@ -48,20 +54,120 @@ const categoryIcons: Record<string, React.ReactNode> = {
   uncategorized: <HelpCircle className="w-5 h-5" />,
 };
 
+// Period presets
+type PeriodPreset = "all" | "2025" | "2026" | "q1_2025" | "q2_2025" | "q3_2025" | "q4_2025" | "q1_2026" | "q2_2026" | "custom";
+
+interface PeriodOption {
+  id: PeriodPreset;
+  label: string;
+  shortLabel: string;
+  start: string | null;
+  end: string | null;
+}
+
+const PERIOD_OPTIONS: PeriodOption[] = [
+  { id: "all", label: "All Time", shortLabel: "All Time", start: null, end: null },
+  { id: "2025", label: "Fiscal Year 2025", shortLabel: "FY 2025", start: "2025-01-01", end: "2025-12-31" },
+  { id: "2026", label: "Fiscal Year 2026", shortLabel: "FY 2026", start: "2026-01-01", end: "2026-12-31" },
+  { id: "q1_2025", label: "Q1 2025 (Jan-Mar)", shortLabel: "Q1 2025", start: "2025-01-01", end: "2025-03-31" },
+  { id: "q2_2025", label: "Q2 2025 (Apr-Jun)", shortLabel: "Q2 2025", start: "2025-04-01", end: "2025-06-30" },
+  { id: "q3_2025", label: "Q3 2025 (Jul-Sep)", shortLabel: "Q3 2025", start: "2025-07-01", end: "2025-09-30" },
+  { id: "q4_2025", label: "Q4 2025 (Oct-Dec)", shortLabel: "Q4 2025", start: "2025-10-01", end: "2025-12-31" },
+  { id: "q1_2026", label: "Q1 2026 (Jan-Mar)", shortLabel: "Q1 2026", start: "2026-01-01", end: "2026-03-31" },
+  { id: "q2_2026", label: "Q2 2026 (Apr-Jun)", shortLabel: "Q2 2026", start: "2026-04-01", end: "2026-06-30" },
+];
+
 export default function DashboardPage() {
+  const [selectedPeriod, setSelectedPeriod] = useState<PeriodPreset>("all");
+  const [showPeriodMenu, setShowPeriodMenu] = useState(false);
+
+  const currentPeriod = PERIOD_OPTIONS.find((p) => p.id === selectedPeriod) || PERIOD_OPTIONS[0];
+
+  // Build date params for queries
+  const dateParams = useMemo(() => {
+    if (!currentPeriod.start) return {};
+    return {
+      start_date: currentPeriod.start,
+      end_date: currentPeriod.end || undefined,
+    };
+  }, [currentPeriod]);
+
   const { data: summary, isLoading: summaryLoading } = useQuery({
-    queryKey: ["summary"],
-    queryFn: () => exportApi.getSummary(),
+    queryKey: ["summary", selectedPeriod],
+    queryFn: () => exportApi.getSummary(dateParams),
   });
 
   const { data: revenueSummary, isLoading: revenueLoading } = useQuery({
-    queryKey: ["revenue-summary"],
-    queryFn: () => revenueApi.getSummary(),
+    queryKey: ["revenue-summary", selectedPeriod],
+    queryFn: async () => {
+      // Revenue summary doesn't have date params built-in, so we filter client-side
+      const all = await revenueApi.list({ per_page: 1000 });
+      let revenues = all.revenues.filter((r) => r.status === "verified");
+
+      if (currentPeriod.start) {
+        const startDate = new Date(currentPeriod.start);
+        revenues = revenues.filter(
+          (r) => r.date && new Date(r.date) >= startDate
+        );
+      }
+      if (currentPeriod.end) {
+        const endDate = new Date(currentPeriod.end);
+        endDate.setHours(23, 59, 59, 999);
+        revenues = revenues.filter(
+          (r) => r.date && new Date(r.date) <= endDate
+        );
+      }
+
+      const totalCad = revenues.reduce(
+        (sum, r) => sum + (r.amount_cad || 0),
+        0
+      );
+      const totalOriginalUsd = revenues
+        .filter((r) => r.currency === "USD")
+        .reduce((sum, r) => sum + (r.amount_original || 0), 0);
+
+      return {
+        total_cad: totalCad,
+        total_usd: totalOriginalUsd,
+        count: all.revenues.length,
+        verified_count: revenues.length,
+      };
+    },
   });
 
   const { data: recentExpenses, isLoading: expensesLoading } = useQuery({
-    queryKey: ["expenses", "recent"],
-    queryFn: () => expensesApi.list({ per_page: 5 }),
+    queryKey: ["expenses", "recent", selectedPeriod],
+    queryFn: async () => {
+      const all = await expensesApi.list({ per_page: 1000 });
+      let expenses = all.expenses;
+
+      if (currentPeriod.start) {
+        const startDate = new Date(currentPeriod.start);
+        expenses = expenses.filter(
+          (e) => e.transaction_date && new Date(e.transaction_date) >= startDate
+        );
+      }
+      if (currentPeriod.end) {
+        const endDate = new Date(currentPeriod.end);
+        endDate.setHours(23, 59, 59, 999);
+        expenses = expenses.filter(
+          (e) => e.transaction_date && new Date(e.transaction_date) <= endDate
+        );
+      }
+
+      // Sort by date descending and take first 5
+      expenses.sort((a, b) => {
+        const da = a.transaction_date
+          ? new Date(a.transaction_date).getTime()
+          : 0;
+        const db = b.transaction_date
+          ? new Date(b.transaction_date).getTime()
+          : 0;
+        return db - da;
+      });
+
+      return { expenses: expenses.slice(0, 5), total: expenses.length };
+    },
   });
 
   // Calculate profitability metrics
@@ -69,9 +175,15 @@ export default function DashboardPage() {
   const totalExpenses = summary?.totals?.total_cad || 0;
   const netProfit = grossRevenue - totalExpenses;
 
+  // Payment source breakdown
+  const bankChecking = summary?.by_payment_source?.bank_checking || 0;
+  const eTransfer = summary?.by_payment_source?.e_transfer || 0;
+  const companyCard = summary?.by_payment_source?.company_expenses || 0;
+  const personalCard = summary?.by_payment_source?.due_to_shareholder || 0;
+
   return (
     <div className="space-y-8">
-      {/* Page Header */}
+      {/* Page Header with Period Selector */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-3xl font-display font-bold text-white">
@@ -81,7 +193,66 @@ export default function DashboardPage() {
             Track your business at a glance
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center">
+          {/* Period Selector */}
+          <div className="relative">
+            <button
+              onClick={() => setShowPeriodMenu(!showPeriodMenu)}
+              className="flex items-center gap-2 px-4 py-2.5 bg-slate-800 border border-slate-700 rounded-xl text-sm font-medium text-white hover:bg-slate-700 transition-colors"
+            >
+              <Calendar className="w-4 h-4 text-amber-500" />
+              {currentPeriod.shortLabel}
+              <ChevronDown
+                className={cn(
+                  "w-4 h-4 text-slate-400 transition-transform",
+                  showPeriodMenu && "rotate-180"
+                )}
+              />
+            </button>
+
+            {showPeriodMenu && (
+              <>
+                <div
+                  className="fixed inset-0 z-40"
+                  onClick={() => setShowPeriodMenu(false)}
+                />
+                <motion.div
+                  initial={{ opacity: 0, y: -5 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="absolute right-0 top-full mt-2 z-50 w-64 bg-slate-800 border border-slate-700 rounded-xl shadow-xl overflow-hidden"
+                >
+                  <div className="p-2 border-b border-slate-700">
+                    <p className="text-xs text-slate-500 px-2 py-1">
+                      Select Period
+                    </p>
+                  </div>
+                  <div className="p-1 max-h-[300px] overflow-y-auto">
+                    {PERIOD_OPTIONS.map((opt) => (
+                      <button
+                        key={opt.id}
+                        onClick={() => {
+                          setSelectedPeriod(opt.id);
+                          setShowPeriodMenu(false);
+                        }}
+                        className={cn(
+                          "w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm transition-colors",
+                          selectedPeriod === opt.id
+                            ? "bg-amber-500/10 text-amber-500"
+                            : "text-slate-300 hover:bg-slate-700"
+                        )}
+                      >
+                        <span>{opt.label}</span>
+                        {selectedPeriod === opt.id && (
+                          <div className="w-2 h-2 rounded-full bg-amber-500" />
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </motion.div>
+              </>
+            )}
+          </div>
+
           <Link href="/revenue" className="btn-secondary">
             <DollarSign className="w-5 h-5" />
             Add Revenue
@@ -92,6 +263,33 @@ export default function DashboardPage() {
           </Link>
         </div>
       </div>
+
+      {/* Period Banner */}
+      {selectedPeriod !== "all" && (
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="flex items-center gap-3 px-4 py-3 bg-amber-500/10 border border-amber-500/20 rounded-xl"
+        >
+          <Calendar className="w-5 h-5 text-amber-500 flex-shrink-0" />
+          <p className="text-sm text-amber-400">
+            Showing data for{" "}
+            <span className="font-bold">{currentPeriod.label}</span>
+            {currentPeriod.start && (
+              <span className="text-amber-500/70">
+                {" "}
+                ({currentPeriod.start} to {currentPeriod.end})
+              </span>
+            )}
+          </p>
+          <button
+            onClick={() => setSelectedPeriod("all")}
+            className="ml-auto text-xs text-amber-500 hover:text-amber-400 font-medium"
+          >
+            Show All
+          </button>
+        </motion.div>
+      )}
 
       {/* Profitability Summary - Top Level */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -110,7 +308,9 @@ export default function DashboardPage() {
                   {formatCurrency(grossRevenue)}
                 </p>
               )}
-              <p className="text-xs text-slate-500 mt-1">Total income (CAD)</p>
+              <p className="text-xs text-slate-500 mt-1">
+                Total income (CAD) &middot; {revenueSummary?.verified_count || 0} loads
+              </p>
             </div>
             <div className="w-10 h-10 rounded-lg bg-emerald-500/20 flex items-center justify-center text-emerald-500">
               <TrendingUp className="w-5 h-5" />
@@ -134,7 +334,9 @@ export default function DashboardPage() {
                   {formatCurrency(totalExpenses)}
                 </p>
               )}
-              <p className="text-xs text-slate-500 mt-1">All verified (CAD)</p>
+              <p className="text-xs text-slate-500 mt-1">
+                {summary?.totals?.expense_count || 0} verified entries (CAD)
+              </p>
             </div>
             <div className="w-10 h-10 rounded-lg bg-red-500/20 flex items-center justify-center text-red-500">
               <Receipt className="w-5 h-5" />
@@ -155,22 +357,36 @@ export default function DashboardPage() {
         >
           <div className="flex items-start justify-between">
             <div>
-              <p className={cn("text-sm mb-1", netProfit >= 0 ? "text-blue-400" : "text-orange-400")}>
+              <p
+                className={cn(
+                  "text-sm mb-1",
+                  netProfit >= 0 ? "text-blue-400" : "text-orange-400"
+                )}
+              >
                 Net Profit
               </p>
               {summaryLoading || revenueLoading ? (
                 <div className="h-8 w-24 bg-slate-800 rounded animate-pulse" />
               ) : (
-                <p className={cn("text-2xl font-bold", netProfit >= 0 ? "text-white" : "text-orange-400")}>
+                <p
+                  className={cn(
+                    "text-2xl font-bold",
+                    netProfit >= 0 ? "text-white" : "text-orange-400"
+                  )}
+                >
                   {formatCurrency(netProfit)}
                 </p>
               )}
               <p className="text-xs text-slate-500 mt-1">Revenue - Expenses</p>
             </div>
-            <div className={cn(
-              "w-10 h-10 rounded-lg flex items-center justify-center",
-              netProfit >= 0 ? "bg-blue-500/20 text-blue-500" : "bg-orange-500/20 text-orange-500"
-            )}>
+            <div
+              className={cn(
+                "w-10 h-10 rounded-lg flex items-center justify-center",
+                netProfit >= 0
+                  ? "bg-blue-500/20 text-blue-500"
+                  : "bg-orange-500/20 text-orange-500"
+              )}
+            >
               <Calculator className="w-5 h-5" />
             </div>
           </div>
@@ -204,7 +420,7 @@ export default function DashboardPage() {
           loading={summaryLoading}
           tooltip={
             summary?.totals
-              ? `GST/HST: ${formatCurrency(summary.totals.total_gst)} | PST: ${formatCurrency(summary.totals.total_pst)}`
+              ? `GST: ${formatCurrency(summary.totals.total_gst)} | HST: ${formatCurrency(summary.totals.total_hst)} | PST: ${formatCurrency(summary.totals.total_pst)}`
               : undefined
           }
         />
@@ -229,6 +445,49 @@ export default function DashboardPage() {
         />
       </div>
 
+      {/* Payment Source Breakdown */}
+      {!summaryLoading && totalExpenses > 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="card p-6"
+        >
+          <h2 className="text-lg font-semibold text-white mb-4">
+            Expenses by Payment Method
+          </h2>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <PaymentMethodCard
+              icon={<CreditCard className="w-5 h-5" />}
+              label="Company Card"
+              amount={companyCard}
+              total={totalExpenses}
+              color="blue"
+            />
+            <PaymentMethodCard
+              icon={<ArrowUpRight className="w-5 h-5" />}
+              label="Personal Card"
+              amount={personalCard}
+              total={totalExpenses}
+              color="purple"
+            />
+            <PaymentMethodCard
+              icon={<Landmark className="w-5 h-5" />}
+              label="Bank / Checking"
+              amount={bankChecking}
+              total={totalExpenses}
+              color="emerald"
+            />
+            <PaymentMethodCard
+              icon={<ArrowLeftRight className="w-5 h-5" />}
+              label="e-Transfer"
+              amount={eTransfer}
+              total={totalExpenses}
+              color="amber"
+            />
+          </div>
+        </motion.div>
+      )}
+
       {/* Main Content Grid */}
       <div className="grid lg:grid-cols-3 gap-6">
         {/* Category Breakdown */}
@@ -240,8 +499,9 @@ export default function DashboardPage() {
             {summaryLoading ? (
               <LoadingSkeleton count={5} />
             ) : summary?.by_category ? (
-              Object.entries(summary.by_category).map(
-                ([category, data]: [string, any]) => (
+              Object.entries(summary.by_category)
+                .sort(([, a]: [string, any], [, b]: [string, any]) => b.total_cad - a.total_cad)
+                .map(([category, data]: [string, any]) => (
                   <CategoryBar
                     key={category}
                     category={category}
@@ -249,8 +509,7 @@ export default function DashboardPage() {
                     count={data.count}
                     total={summary.totals.total_cad}
                   />
-                )
-              )
+                ))
             ) : (
               <EmptyState message="No expenses yet" />
             )}
@@ -285,7 +544,8 @@ export default function DashboardPage() {
                         backgroundColor: `${
                           categoryColors[expense.category] || "#6B7280"
                         }20`,
-                        color: categoryColors[expense.category] || "#6B7280",
+                        color:
+                          categoryColors[expense.category] || "#6B7280",
                       }}
                     >
                       {categoryIcons[expense.category] || (
@@ -315,7 +575,9 @@ export default function DashboardPage() {
 
       {/* Quick Actions */}
       <div className="card p-6">
-        <h2 className="text-lg font-semibold text-white mb-4">Quick Actions</h2>
+        <h2 className="text-lg font-semibold text-white mb-4">
+          Quick Actions
+        </h2>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
           <QuickAction
             href="/upload"
@@ -343,6 +605,72 @@ export default function DashboardPage() {
             label="Manage Cards"
           />
         </div>
+      </div>
+    </div>
+  );
+}
+
+function PaymentMethodCard({
+  icon,
+  label,
+  amount,
+  total,
+  color,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  amount: number;
+  total: number;
+  color: "blue" | "purple" | "emerald" | "amber";
+}) {
+  const percentage = total > 0 ? (amount / total) * 100 : 0;
+  const colorClasses = {
+    blue: { bg: "bg-blue-500/10", text: "text-blue-400", bar: "bg-blue-500" },
+    purple: {
+      bg: "bg-purple-500/10",
+      text: "text-purple-400",
+      bar: "bg-purple-500",
+    },
+    emerald: {
+      bg: "bg-emerald-500/10",
+      text: "text-emerald-400",
+      bar: "bg-emerald-500",
+    },
+    amber: {
+      bg: "bg-amber-500/10",
+      text: "text-amber-400",
+      bar: "bg-amber-500",
+    },
+  };
+  const c = colorClasses[color];
+
+  return (
+    <div className="p-4 rounded-xl bg-slate-800/50">
+      <div className="flex items-center gap-2 mb-2">
+        <div
+          className={cn(
+            "w-8 h-8 rounded-lg flex items-center justify-center",
+            c.bg,
+            c.text
+          )}
+        >
+          {icon}
+        </div>
+        <span className="text-sm text-slate-400">{label}</span>
+      </div>
+      <p className="text-lg font-bold text-white">{formatCurrency(amount)}</p>
+      <div className="mt-2">
+        <div className="h-1.5 bg-slate-700 rounded-full overflow-hidden">
+          <motion.div
+            initial={{ width: 0 }}
+            animate={{ width: `${percentage}%` }}
+            transition={{ duration: 0.5 }}
+            className={cn("h-full rounded-full", c.bar)}
+          />
+        </div>
+        <p className="text-xs text-slate-500 mt-1">
+          {percentage.toFixed(1)}% of total
+        </p>
       </div>
     </div>
   );
@@ -383,7 +711,6 @@ function StatCard({
       onMouseEnter={() => tooltip && setShowTooltip(true)}
       onMouseLeave={() => setShowTooltip(false)}
     >
-      {/* Tooltip */}
       {tooltip && showTooltip && (
         <motion.div
           initial={{ opacity: 0, y: 5 }}
@@ -500,10 +827,12 @@ function EmptyState({ message }: { message: string }) {
     <div className="text-center py-8">
       <Receipt className="w-12 h-12 text-slate-700 mx-auto mb-3" />
       <p className="text-slate-500">{message}</p>
-      <Link href="/upload" className="text-amber-500 text-sm hover:text-amber-400">
+      <Link
+        href="/upload"
+        className="text-amber-500 text-sm hover:text-amber-400"
+      >
         Upload your first receipt
       </Link>
     </div>
   );
 }
-

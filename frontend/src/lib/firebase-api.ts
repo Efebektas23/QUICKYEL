@@ -26,6 +26,7 @@ import * as XLSX from "xlsx";
 const EXPENSES_COLLECTION = "expenses";
 const CARDS_COLLECTION = "cards";
 const REVENUE_COLLECTION = "revenue";
+const IMPORT_HASHES_COLLECTION = "import_hashes";
 
 // Types
 export interface Expense {
@@ -793,6 +794,159 @@ export const revenueApi = {
   },
 };
 
+// ============ DUPLICATE PREVENTION ============
+
+/**
+ * Generate a simple hash string from text content.
+ * Uses a fast non-crypto hash (djb2) for fingerprinting.
+ */
+function hashString(str: string): string {
+  let hash = 5381;
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) + hash + str.charCodeAt(i)) & 0xffffffff;
+  }
+  return Math.abs(hash).toString(36);
+}
+
+/**
+ * Generate a fingerprint for a bank transaction.
+ * Combines date + description + amount for uniqueness.
+ */
+function bankTransactionFingerprint(tx: {
+  transaction_date: string;
+  description1: string;
+  description2: string;
+  amount_cad: number | null;
+  amount_usd: number | null;
+}): string {
+  const parts = [
+    tx.transaction_date || "",
+    (tx.description1 || "").trim().toLowerCase(),
+    (tx.description2 || "").trim().toLowerCase(),
+    (tx.amount_cad ?? tx.amount_usd ?? 0).toFixed(2),
+  ];
+  return `bank_${hashString(parts.join("|"))}`;
+}
+
+/**
+ * Generate a fingerprint for a factoring entry.
+ * Combines date + description + amount + reference for uniqueness.
+ */
+function factoringEntryFingerprint(entry: {
+  date: string | null;
+  description: string;
+  amount: number;
+  reference: string | null;
+  type: string;
+}): string {
+  const parts = [
+    entry.date || "",
+    (entry.description || "").trim().toLowerCase(),
+    entry.amount.toFixed(2),
+    (entry.reference || "").trim(),
+    entry.type || "",
+  ];
+  return `factoring_${hashString(parts.join("|"))}`;
+}
+
+export const duplicateCheckApi = {
+  /**
+   * Check if a file has already been imported by its content hash.
+   * Returns true if duplicate.
+   */
+  checkFileHash: async (fileContent: string, type: "bank_csv" | "factoring_pdf"): Promise<{
+    isDuplicate: boolean;
+    importedAt?: Date;
+    importId?: string;
+  }> => {
+    await ensureAuth();
+    const fileHash = `${type}_file_${hashString(fileContent)}`;
+    const docRef = doc(db, IMPORT_HASHES_COLLECTION, fileHash);
+    const docSnap = await getDoc(docRef);
+
+    if (docSnap.exists()) {
+      const data = docSnap.data();
+      return {
+        isDuplicate: true,
+        importedAt: toDate(data.imported_at),
+        importId: docSnap.id,
+      };
+    }
+    return { isDuplicate: false };
+  },
+
+  /**
+   * Register a file as imported.
+   */
+  registerFileImport: async (
+    fileContent: string,
+    type: "bank_csv" | "factoring_pdf",
+    metadata: { filename: string; records_count: number }
+  ): Promise<string> => {
+    await ensureAuth();
+    const fileHash = `${type}_file_${hashString(fileContent)}`;
+    await setDoc(doc(db, IMPORT_HASHES_COLLECTION, fileHash), {
+      type,
+      filename: metadata.filename,
+      records_count: metadata.records_count,
+      imported_at: Timestamp.fromDate(new Date()),
+    });
+    return fileHash;
+  },
+
+  /**
+   * Check which transaction fingerprints already exist.
+   * Returns a Set of fingerprints that are already imported.
+   */
+  checkTransactionFingerprints: async (fingerprints: string[]): Promise<Set<string>> => {
+    await ensureAuth();
+    const existing = new Set<string>();
+
+    // Batch check - read each fingerprint doc
+    // Firestore doesn't support IN query on doc IDs efficiently for > 30,
+    // so we check in batches of 30
+    const batchSize = 30;
+    for (let i = 0; i < fingerprints.length; i += batchSize) {
+      const batch = fingerprints.slice(i, i + batchSize);
+      const promises = batch.map(async (fp) => {
+        const docRef = doc(db, IMPORT_HASHES_COLLECTION, fp);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          existing.add(fp);
+        }
+      });
+      await Promise.all(promises);
+    }
+
+    return existing;
+  },
+
+  /**
+   * Register a single transaction fingerprint as imported.
+   */
+  registerTransactionFingerprint: async (fingerprint: string, type: string): Promise<void> => {
+    await setDoc(doc(db, IMPORT_HASHES_COLLECTION, fingerprint), {
+      type,
+      imported_at: Timestamp.fromDate(new Date()),
+    });
+  },
+
+  /**
+   * Register multiple transaction fingerprints in batch.
+   */
+  registerTransactionFingerprints: async (fingerprints: string[], type: string): Promise<void> => {
+    await ensureAuth();
+    const now = Timestamp.fromDate(new Date());
+    const promises = fingerprints.map((fp) =>
+      setDoc(doc(db, IMPORT_HASHES_COLLECTION, fp), {
+        type,
+        imported_at: now,
+      })
+    );
+    await Promise.all(promises);
+  },
+};
+
 // ============ BANK IMPORT ============
 
 export interface BankTransaction {
@@ -846,20 +1000,40 @@ export const bankImportApi = {
   },
 
   /**
-   * Import selected bank transactions as expenses/revenue into Firestore
+   * Import selected bank transactions as expenses/revenue into Firestore.
+   * Includes duplicate prevention - checks fingerprints before importing.
    */
   importTransactions: async (transactions: BankTransaction[]): Promise<{
     expenses_created: number;
     revenues_created: number;
     skipped: number;
+    duplicates_skipped: number;
   }> => {
     await ensureAuth();
     const now = new Date();
     let expenses_created = 0;
     let revenues_created = 0;
     let skipped = 0;
+    let duplicates_skipped = 0;
 
-    for (const tx of transactions) {
+    // Generate fingerprints for all transactions
+    const fingerprints = transactions.map((tx) => bankTransactionFingerprint(tx));
+
+    // Check which ones already exist
+    const existingFingerprints = await duplicateCheckApi.checkTransactionFingerprints(fingerprints);
+
+    const newFingerprints: string[] = [];
+
+    for (let i = 0; i < transactions.length; i++) {
+      const tx = transactions[i];
+      const fp = fingerprints[i];
+
+      // Skip duplicates
+      if (existingFingerprints.has(fp)) {
+        duplicates_skipped++;
+        continue;
+      }
+
       try {
         if (tx.type === "expense") {
           // Create expense in Firestore
@@ -886,10 +1060,12 @@ export const bankImportApi = {
             error_message: null,
             notes: `[Bank Import] ${tx.notes || ""} | ${tx.description1} - ${tx.description2}`.trim(),
             entry_type: "bank_import",
+            import_fingerprint: fp,
             created_at: Timestamp.fromDate(now),
             updated_at: Timestamp.fromDate(now),
           });
           expenses_created++;
+          newFingerprints.push(fp);
         } else if (tx.type === "income") {
           // Create revenue entry in Firestore
           const amount = Math.abs(tx.amount_cad || 0);
@@ -904,10 +1080,12 @@ export const bankImportApi = {
             image_url: null,
             status: "verified",
             notes: `[Bank Import] ${tx.notes || ""} | ${tx.description1} - ${tx.description2}`.trim(),
+            import_fingerprint: fp,
             created_at: Timestamp.fromDate(now),
             updated_at: Timestamp.fromDate(now),
           });
           revenues_created++;
+          newFingerprints.push(fp);
         } else {
           // Skip transfers and owner_draw
           skipped++;
@@ -918,7 +1096,12 @@ export const bankImportApi = {
       }
     }
 
-    return { expenses_created, revenues_created, skipped };
+    // Register all new fingerprints
+    if (newFingerprints.length > 0) {
+      await duplicateCheckApi.registerTransactionFingerprints(newFingerprints, "bank_import");
+    }
+
+    return { expenses_created, revenues_created, skipped, duplicates_skipped };
   },
 };
 
@@ -986,7 +1169,8 @@ export const factoringApi = {
   },
 
   /**
-   * Import selected factoring entries as expenses into Firestore
+   * Import selected factoring entries as expenses into Firestore.
+   * Includes duplicate prevention - checks fingerprints before importing.
    */
   importEntries: async (
     entries: FactoringEntry[],
@@ -995,13 +1179,32 @@ export const factoringApi = {
   ): Promise<{
     expenses_created: number;
     skipped: number;
+    duplicates_skipped: number;
   }> => {
     await ensureAuth();
     const now = new Date();
     let expenses_created = 0;
     let skipped = 0;
+    let duplicates_skipped = 0;
 
-    for (const entry of entries) {
+    // Generate fingerprints for all entries
+    const fingerprints = entries.map((entry) => factoringEntryFingerprint(entry));
+
+    // Check which ones already exist
+    const existingFingerprints = await duplicateCheckApi.checkTransactionFingerprints(fingerprints);
+
+    const newFingerprints: string[] = [];
+
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i];
+      const fp = fingerprints[i];
+
+      // Skip duplicates
+      if (existingFingerprints.has(fp)) {
+        duplicates_skipped++;
+        continue;
+      }
+
       try {
         // Only import fee entries as expenses
         if (entry.type === "fee" || entry.category === "factoring_fees") {
@@ -1030,10 +1233,12 @@ export const factoringApi = {
             error_message: null,
             notes: `[Factoring Import] ${entry.description} | Ref: ${entry.reference || "N/A"}`.trim(),
             entry_type: "factoring_import",
+            import_fingerprint: fp,
             created_at: Timestamp.fromDate(now),
             updated_at: Timestamp.fromDate(now),
           });
           expenses_created++;
+          newFingerprints.push(fp);
         } else {
           skipped++;
         }
@@ -1043,7 +1248,12 @@ export const factoringApi = {
       }
     }
 
-    return { expenses_created, skipped };
+    // Register all new fingerprints
+    if (newFingerprints.length > 0) {
+      await duplicateCheckApi.registerTransactionFingerprints(newFingerprints, "factoring_import");
+    }
+
+    return { expenses_created, skipped, duplicates_skipped };
   },
 };
 
