@@ -464,14 +464,14 @@ export default function DashboardPage() {
                   <CurrencyDrillDown
                     items={(revenueSummary?.cad_items || []).map((r: any) => ({
                       id: r.id,
-                      vendor: r.client_name || r.description || "Unknown",
+                      vendor: r.broker_name || "Unknown",
                       date: r.date,
                       amount: r.amount_cad || r.amount_original || 0,
                       originalAmount: r.amount_original || 0,
                       currency: "CAD",
                       source: r.entry_type || "manual",
-                      category: r.load_number ? `Load #${r.load_number}` : undefined,
-                      hasReceipt: !!r.document_url,
+                      category: r.load_id ? `Load #${r.load_id}` : undefined,
+                      hasReceipt: !!r.image_url,
                     }))}
                     onClose={() => setDrillDown(null)}
                   />
@@ -492,15 +492,15 @@ export default function DashboardPage() {
                   <CurrencyDrillDown
                     items={(revenueSummary?.usd_items || []).map((r: any) => ({
                       id: r.id,
-                      vendor: r.client_name || r.description || "Unknown",
+                      vendor: r.broker_name || "Unknown",
                       date: r.date,
                       amount: r.amount_cad || 0,
                       originalAmount: r.amount_original || 0,
                       currency: "USD",
                       exchangeRate: r.exchange_rate,
                       source: r.entry_type || "manual",
-                      category: r.load_number ? `Load #${r.load_number}` : undefined,
-                      hasReceipt: !!r.document_url,
+                      category: r.load_id ? `Load #${r.load_id}` : undefined,
+                      hasReceipt: !!r.image_url,
                     }))}
                     onClose={() => setDrillDown(null)}
                   />
