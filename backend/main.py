@@ -10,7 +10,7 @@ import logging
 
 from config import settings
 from database import init_db
-from routers import auth, expenses, users, export, cards, process, revenue
+from routers import auth, expenses, users, export, cards, process, revenue, bank_import, factoring
 
 # Configure logging
 logging.basicConfig(
@@ -102,6 +102,8 @@ app.include_router(cards.router, prefix="/api/cards", tags=["Cards"])
 app.include_router(export.router, prefix="/api/export", tags=["Export"])
 app.include_router(process.router, prefix="/api/process-receipt", tags=["Process Receipt"])
 app.include_router(revenue.router, prefix="/api/process-rate-confirmation", tags=["Process Rate Confirmation"])
+app.include_router(bank_import.router, prefix="/api/bank-import", tags=["Bank Import"])
+app.include_router(factoring.router, prefix="/api/factoring", tags=["Factoring Reports"])
 
 
 @app.get("/")

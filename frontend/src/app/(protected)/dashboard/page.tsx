@@ -19,6 +19,10 @@ import {
   Plus,
   Upload,
   Calculator,
+  Download,
+  Shield,
+  Percent,
+  Users,
 } from "lucide-react";
 import Link from "next/link";
 import { exportApi, expensesApi, revenueApi } from "@/lib/firebase-api";
@@ -28,11 +32,19 @@ import { categoryLabels, categoryColors } from "@/lib/store";
 const categoryIcons: Record<string, React.ReactNode> = {
   fuel: <Fuel className="w-5 h-5" />,
   maintenance_repairs: <Wrench className="w-5 h-5" />,
+  insurance: <Shield className="w-5 h-5" />,
   meals_entertainment: <UtensilsCrossed className="w-5 h-5" />,
   travel_lodging: <Bed className="w-5 h-5" />,
   tolls_scales: <Scale className="w-5 h-5" />,
   office_admin: <FileText className="w-5 h-5" />,
   licenses_dues: <FileCheck className="w-5 h-5" />,
+  factoring_fees: <Percent className="w-5 h-5" />,
+  payroll: <Users className="w-5 h-5" />,
+  subcontractor: <Users className="w-5 h-5" />,
+  professional_fees: <FileCheck className="w-5 h-5" />,
+  rent_lease: <FileText className="w-5 h-5" />,
+  loan_interest: <DollarSign className="w-5 h-5" />,
+  other_expenses: <HelpCircle className="w-5 h-5" />,
   uncategorized: <HelpCircle className="w-5 h-5" />,
 };
 
@@ -304,11 +316,16 @@ export default function DashboardPage() {
       {/* Quick Actions */}
       <div className="card p-6">
         <h2 className="text-lg font-semibold text-white mb-4">Quick Actions</h2>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
           <QuickAction
             href="/upload"
             icon={<Upload className="w-6 h-6" />}
             label="Upload Receipt"
+          />
+          <QuickAction
+            href="/import"
+            icon={<Download className="w-6 h-6" />}
+            label="Import Data"
           />
           <QuickAction
             href="/expenses?filter=unverified"

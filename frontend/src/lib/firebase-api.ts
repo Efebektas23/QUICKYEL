@@ -793,6 +793,260 @@ export const revenueApi = {
   },
 };
 
+// ============ BANK IMPORT ============
+
+export interface BankTransaction {
+  index: number;
+  transaction_date: string;
+  description1: string;
+  description2: string;
+  amount_cad: number | null;
+  amount_usd: number | null;
+  type: "expense" | "income" | "transfer" | "owner_draw";
+  category: string;
+  payment_source: string;
+  vendor_name: string;
+  notes: string;
+  confidence: number;
+  // UI state
+  selected?: boolean;
+}
+
+export interface BankImportSummary {
+  total_transactions: number;
+  total_income: number;
+  total_expenses: number;
+  total_transfers: number;
+  expense_count: number;
+  income_count: number;
+  transfer_count: number;
+}
+
+export const bankImportApi = {
+  /**
+   * Parse bank CSV and categorize transactions using AI
+   */
+  parseCSV: async (csvContent: string): Promise<{
+    transactions: BankTransaction[];
+    summary: BankImportSummary;
+  }> => {
+    const { API_URL } = await import("./runtime-config");
+    const response = await fetch(`${API_URL}/api/bank-import/parse`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ csv_content: csvContent }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.detail || "Failed to parse bank CSV");
+    }
+
+    return response.json();
+  },
+
+  /**
+   * Import selected bank transactions as expenses/revenue into Firestore
+   */
+  importTransactions: async (transactions: BankTransaction[]): Promise<{
+    expenses_created: number;
+    revenues_created: number;
+    skipped: number;
+  }> => {
+    await ensureAuth();
+    const now = new Date();
+    let expenses_created = 0;
+    let revenues_created = 0;
+    let skipped = 0;
+
+    for (const tx of transactions) {
+      try {
+        if (tx.type === "expense") {
+          // Create expense in Firestore
+          const amount = Math.abs(tx.amount_cad || 0);
+          await addDoc(collection(db, EXPENSES_COLLECTION), {
+            vendor_name: tx.vendor_name || tx.description1,
+            transaction_date: tx.transaction_date,
+            category: tx.category || "uncategorized",
+            jurisdiction: "canada",
+            original_amount: amount,
+            original_currency: "CAD",
+            tax_amount: 0,
+            gst_amount: 0,
+            hst_amount: 0,
+            pst_amount: 0,
+            exchange_rate: 1.0,
+            cad_amount: amount,
+            card_last_4: null,
+            payment_source: tx.payment_source || "bank_checking",
+            receipt_image_url: null,
+            raw_ocr_text: null,
+            is_verified: true,
+            processing_status: "completed",
+            error_message: null,
+            notes: `[Bank Import] ${tx.notes || ""} | ${tx.description1} - ${tx.description2}`.trim(),
+            entry_type: "bank_import",
+            created_at: Timestamp.fromDate(now),
+            updated_at: Timestamp.fromDate(now),
+          });
+          expenses_created++;
+        } else if (tx.type === "income") {
+          // Create revenue entry in Firestore
+          const amount = Math.abs(tx.amount_cad || 0);
+          await addDoc(collection(db, REVENUE_COLLECTION), {
+            broker_name: tx.vendor_name || tx.description1,
+            load_id: null,
+            date: tx.transaction_date,
+            amount_original: amount,
+            currency: "CAD",
+            exchange_rate: 1.0,
+            amount_cad: amount,
+            image_url: null,
+            status: "verified",
+            notes: `[Bank Import] ${tx.notes || ""} | ${tx.description1} - ${tx.description2}`.trim(),
+            created_at: Timestamp.fromDate(now),
+            updated_at: Timestamp.fromDate(now),
+          });
+          revenues_created++;
+        } else {
+          // Skip transfers and owner_draw
+          skipped++;
+        }
+      } catch (error) {
+        console.error(`Failed to import transaction ${tx.index}:`, error);
+        skipped++;
+      }
+    }
+
+    return { expenses_created, revenues_created, skipped };
+  },
+};
+
+// ============ FACTORING IMPORT ============
+
+export interface FactoringEntry {
+  date: string | null;
+  type: string;
+  description: string;
+  amount: number;
+  category: string;
+  reference: string | null;
+  debtor_name: string | null;
+  // UI state
+  selected?: boolean;
+}
+
+export interface FactoringTotals {
+  total_fees: number;
+  total_purchases: number;
+  total_collections: number;
+  total_recourse: number;
+}
+
+export interface FactoringReportData {
+  report_type: string;
+  currency: string;
+  client_id: string | null;
+  date_range: { start?: string; end?: string };
+  entries: FactoringEntry[];
+  totals: FactoringTotals;
+  confidence: number;
+}
+
+export const factoringApi = {
+  /**
+   * Parse a factoring report PDF using Gemini AI
+   */
+  parsePDF: async (file: File): Promise<FactoringReportData> => {
+    // Convert file to base64
+    const buffer = await file.arrayBuffer();
+    const base64 = btoa(
+      new Uint8Array(buffer).reduce(
+        (data, byte) => data + String.fromCharCode(byte),
+        ""
+      )
+    );
+
+    const { API_URL } = await import("./runtime-config");
+    const response = await fetch(`${API_URL}/api/factoring/parse`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        pdf_base64: base64,
+        filename: file.name,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.detail || "Failed to parse factoring report");
+    }
+
+    return response.json();
+  },
+
+  /**
+   * Import selected factoring entries as expenses into Firestore
+   */
+  importEntries: async (
+    entries: FactoringEntry[],
+    currency: string,
+    exchangeRate: number
+  ): Promise<{
+    expenses_created: number;
+    skipped: number;
+  }> => {
+    await ensureAuth();
+    const now = new Date();
+    let expenses_created = 0;
+    let skipped = 0;
+
+    for (const entry of entries) {
+      try {
+        // Only import fee entries as expenses
+        if (entry.type === "fee" || entry.category === "factoring_fees") {
+          const amount = Math.abs(entry.amount);
+          const cadAmount = currency === "CAD" ? amount : amount * exchangeRate;
+
+          await addDoc(collection(db, EXPENSES_COLLECTION), {
+            vendor_name: "J D Factors",
+            transaction_date: entry.date || null,
+            category: "factoring_fees",
+            jurisdiction: "canada",
+            original_amount: amount,
+            original_currency: currency,
+            tax_amount: 0,
+            gst_amount: 0,
+            hst_amount: 0,
+            pst_amount: 0,
+            exchange_rate: currency === "CAD" ? 1.0 : exchangeRate,
+            cad_amount: Math.round(cadAmount * 100) / 100,
+            card_last_4: null,
+            payment_source: "bank_checking",
+            receipt_image_url: null,
+            raw_ocr_text: null,
+            is_verified: true,
+            processing_status: "completed",
+            error_message: null,
+            notes: `[Factoring Import] ${entry.description} | Ref: ${entry.reference || "N/A"}`.trim(),
+            entry_type: "factoring_import",
+            created_at: Timestamp.fromDate(now),
+            updated_at: Timestamp.fromDate(now),
+          });
+          expenses_created++;
+        } else {
+          skipped++;
+        }
+      } catch (error) {
+        console.error(`Failed to import factoring entry:`, error);
+        skipped++;
+      }
+    }
+
+    return { expenses_created, skipped };
+  },
+};
+
 // ============ EXPORT ============
 
 // CRA Tax Deduction Rates by Category
@@ -801,13 +1055,19 @@ export const revenueApi = {
 const DEDUCTION_RATES: Record<string, number> = {
   fuel: 1.0,                    // 100% deductible
   maintenance_repairs: 1.0,     // 100% deductible
-  insurance: 1.0,               // 100% deductible (NEW: truck insurance, cargo, liability)
+  insurance: 1.0,               // 100% deductible (truck insurance, cargo, liability)
   licenses_dues: 1.0,           // 100% deductible
   tolls_scales: 1.0,            // 100% deductible
   meals_entertainment: 0.5,     // 50% deductible (CRA standard rule)
   travel_lodging: 1.0,          // 100% deductible
   office_admin: 1.0,            // 100% deductible
-  other_expenses: 1.0,          // 100% deductible (NEW: catch-all for business expenses)
+  factoring_fees: 1.0,          // 100% deductible (financing cost)
+  payroll: 1.0,                 // 100% deductible (wages)
+  subcontractor: 1.0,           // 100% deductible
+  professional_fees: 1.0,       // 100% deductible
+  rent_lease: 1.0,              // 100% deductible
+  loan_interest: 1.0,           // 100% deductible (interest only)
+  other_expenses: 1.0,          // 100% deductible
   uncategorized: 0.0,           // 0% - Safety default until categorized
 };
 
@@ -834,6 +1094,12 @@ const categoryDisplayNames: Record<string, string> = {
   meals_entertainment: "Meals & Entertainment",
   travel_lodging: "Travel (Lodging)",
   office_admin: "Office & Admin",
+  factoring_fees: "Factoring Fees",
+  payroll: "Payroll / Wages",
+  subcontractor: "Subcontractor",
+  professional_fees: "Professional Fees",
+  rent_lease: "Rent / Lease",
+  loan_interest: "Loan Interest",
   other_expenses: "Other Expenses",
   uncategorized: "Uncategorized",
 };
@@ -884,7 +1150,9 @@ export const exportApi = {
     // CSV Rows
     const rows = expenses.map(expense => {
       const paymentSource = expense.payment_source === "personal_card" ? "Personal Card" : 
-                           expense.payment_source === "company_card" ? "Company Card" : "Unknown";
+                           expense.payment_source === "company_card" ? "Company Card" : 
+                           expense.payment_source === "bank_checking" ? "Bank / Checking" :
+                           expense.payment_source === "e_transfer" ? "e-Transfer" : "Unknown";
       const dueToShareholder = expense.payment_source === "personal_card" ? "Yes" : "No";
       const jurisdiction = expense.jurisdiction === "canada" ? "CANADA" : 
                           expense.jurisdiction === "usa" ? "USA" : "UNKNOWN";
@@ -1051,7 +1319,9 @@ export const exportApi = {
       
       // Payment source logic
       const paymentSource = expense.payment_source === "company_card" ? "Company Card" 
-        : expense.payment_source === "personal_card" ? "Personal Card" 
+        : expense.payment_source === "personal_card" ? "Personal Card"
+        : expense.payment_source === "bank_checking" ? "Bank / Checking"
+        : expense.payment_source === "e_transfer" ? "e-Transfer"
         : "Unknown";
       const dueToShareholder = expense.payment_source === "personal_card" 
         ? expense.cad_amount || 0 
@@ -1273,6 +1543,8 @@ export const exportApi = {
     const by_payment_source: Record<string, number> = {
       company_expenses: 0,
       due_to_shareholder: 0,
+      bank_checking: 0,
+      e_transfer: 0,
       unknown: 0,
     };
     
@@ -1324,6 +1596,10 @@ export const exportApi = {
         by_payment_source.due_to_shareholder += cadAmount;
       } else if (expense.payment_source === "company_card") {
         by_payment_source.company_expenses += cadAmount;
+      } else if (expense.payment_source === "bank_checking") {
+        by_payment_source.bank_checking += cadAmount;
+      } else if (expense.payment_source === "e_transfer") {
+        by_payment_source.e_transfer += cadAmount;
       } else {
         by_payment_source.unknown += cadAmount;
       }

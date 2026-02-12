@@ -29,6 +29,12 @@ DEDUCTION_RATES = {
     ExpenseCategory.MEALS_ENTERTAINMENT: 0.5,    # 50% deductible (CRA standard rule)
     ExpenseCategory.TRAVEL_LODGING: 1.0,         # 100% deductible
     ExpenseCategory.OFFICE_ADMIN: 1.0,           # 100% deductible
+    ExpenseCategory.FACTORING_FEES: 1.0,         # 100% deductible (financing cost)
+    ExpenseCategory.PAYROLL: 1.0,                # 100% deductible (wages)
+    ExpenseCategory.SUBCONTRACTOR: 1.0,          # 100% deductible
+    ExpenseCategory.PROFESSIONAL_FEES: 1.0,      # 100% deductible
+    ExpenseCategory.RENT_LEASE: 1.0,             # 100% deductible
+    ExpenseCategory.LOAN_INTEREST: 1.0,          # 100% deductible (interest only)
     ExpenseCategory.OTHER_EXPENSES: 1.0,         # 100% deductible
     ExpenseCategory.UNCATEGORIZED: 0.0,          # 0% - Safety default until categorized
 }
@@ -417,11 +423,16 @@ async def get_summary(
     by_source = {
         "company_card": 0,
         "personal_card": 0,
+        "bank_checking": 0,
+        "e_transfer": 0,
         "unknown": 0
     }
     for expense in expenses:
         source = expense.payment_source.value
-        by_source[source] += expense.cad_amount or 0
+        if source not in by_source:
+            by_source["unknown"] += expense.cad_amount or 0
+        else:
+            by_source[source] += expense.cad_amount or 0
     
     # Calculate 50% deductible for meals (CRA rule)
     meals_total = by_category.get("meals_entertainment", {}).get("total_cad", 0)
@@ -448,6 +459,8 @@ async def get_summary(
         "by_payment_source": {
             "company_expenses": round(by_source["company_card"], 2),
             "due_to_shareholder": round(by_source["personal_card"], 2),
+            "bank_checking": round(by_source.get("bank_checking", 0), 2),
+            "e_transfer": round(by_source.get("e_transfer", 0), 2),
             "unknown": round(by_source["unknown"], 2)
         }
     }

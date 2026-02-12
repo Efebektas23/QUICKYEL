@@ -39,7 +39,7 @@ export function ManualEntryModal({ isOpen, onClose, onSuccess }: ManualEntryModa
     amount: "",
     currency: "CAD" as "CAD" | "USD",
     exchange_rate: "1.0",
-    payment_source: "company_card" as "company_card" | "personal_card",
+    payment_source: "company_card" as "company_card" | "personal_card" | "bank_checking" | "e_transfer",
     notes: "",
   });
 
@@ -353,12 +353,12 @@ export function ManualEntryModal({ isOpen, onClose, onSuccess }: ManualEntryModa
               <label className="block text-sm font-medium text-slate-300 mb-2">
                 Payment Source
               </label>
-              <div className="flex gap-2">
+              <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
                   onClick={() => setFormData({ ...formData, payment_source: "company_card" })}
                   className={cn(
-                    "flex-1 py-2 px-4 rounded-lg text-sm font-medium transition-colors border",
+                    "py-2 px-3 rounded-lg text-sm font-medium transition-colors border",
                     formData.payment_source === "company_card"
                       ? "bg-blue-600 border-blue-500 text-white"
                       : "bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700"
@@ -370,7 +370,7 @@ export function ManualEntryModal({ isOpen, onClose, onSuccess }: ManualEntryModa
                   type="button"
                   onClick={() => setFormData({ ...formData, payment_source: "personal_card" })}
                   className={cn(
-                    "flex-1 py-2 px-4 rounded-lg text-sm font-medium transition-colors border",
+                    "py-2 px-3 rounded-lg text-sm font-medium transition-colors border",
                     formData.payment_source === "personal_card"
                       ? "bg-purple-600 border-purple-500 text-white"
                       : "bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700"
@@ -378,10 +378,34 @@ export function ManualEntryModal({ isOpen, onClose, onSuccess }: ManualEntryModa
                 >
                   Personal Card
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setFormData({ ...formData, payment_source: "bank_checking" })}
+                  className={cn(
+                    "py-2 px-3 rounded-lg text-sm font-medium transition-colors border",
+                    formData.payment_source === "bank_checking"
+                      ? "bg-emerald-600 border-emerald-500 text-white"
+                      : "bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700"
+                  )}
+                >
+                  Bank / Checking
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFormData({ ...formData, payment_source: "e_transfer" })}
+                  className={cn(
+                    "py-2 px-3 rounded-lg text-sm font-medium transition-colors border",
+                    formData.payment_source === "e_transfer"
+                      ? "bg-amber-600 border-amber-500 text-white"
+                      : "bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700"
+                  )}
+                >
+                  e-Transfer
+                </button>
               </div>
               {formData.payment_source === "personal_card" && (
                 <p className="text-xs text-purple-400 mt-2">
-                  → Will be added to "Due to Shareholder"
+                  → Will be added to &quot;Due to Shareholder&quot;
                 </p>
               )}
             </div>

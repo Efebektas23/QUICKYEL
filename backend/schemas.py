@@ -17,6 +17,12 @@ class ExpenseCategory(str, Enum):
     MEALS_ENTERTAINMENT = "meals_entertainment"
     TRAVEL_LODGING = "travel_lodging"
     OFFICE_ADMIN = "office_admin"
+    FACTORING_FEES = "factoring_fees"  # Factoring commission/fees
+    PAYROLL = "payroll"  # Employee wages
+    SUBCONTRACTOR = "subcontractor"  # Subcontractor/driver payments
+    PROFESSIONAL_FEES = "professional_fees"  # Accounting, legal, consulting
+    RENT_LEASE = "rent_lease"  # Equipment/vehicle lease payments
+    LOAN_INTEREST = "loan_interest"  # Loan interest payments
     OTHER_EXPENSES = "other_expenses"  # Catch-all for business expenses
     UNCATEGORIZED = "uncategorized"
 
@@ -24,6 +30,8 @@ class ExpenseCategory(str, Enum):
 class PaymentSource(str, Enum):
     COMPANY_CARD = "company_card"
     PERSONAL_CARD = "personal_card"
+    BANK_CHECKING = "bank_checking"
+    E_TRANSFER = "e_transfer"
     UNKNOWN = "unknown"
 
 

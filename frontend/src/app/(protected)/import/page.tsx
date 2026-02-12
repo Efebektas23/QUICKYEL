@@ -1,0 +1,959 @@
+"use client";
+
+import React, { useState, useCallback } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  Building2,
+  Upload,
+  FileSpreadsheet,
+  FileText,
+  Loader2,
+  CheckCircle,
+  XCircle,
+  ArrowRight,
+  ArrowLeft,
+  Download,
+  DollarSign,
+  TrendingDown,
+  ArrowUpDown,
+  Check,
+  X,
+  Eye,
+  Percent,
+} from "lucide-react";
+import toast from "react-hot-toast";
+import {
+  bankImportApi,
+  factoringApi,
+  BankTransaction,
+  BankImportSummary,
+  FactoringEntry,
+  FactoringReportData,
+} from "@/lib/firebase-api";
+import { formatCurrency, formatDate, cn } from "@/lib/utils";
+import { categoryLabels, categoryColors } from "@/lib/store";
+
+type ActiveTab = "bank" | "factoring";
+type ImportStep = "upload" | "review" | "done";
+
+export default function ImportPage() {
+  const [activeTab, setActiveTab] = useState<ActiveTab>("bank");
+
+  return (
+    <div className="space-y-8">
+      {/* Page Header */}
+      <div>
+        <h1 className="text-3xl font-display font-bold text-white">
+          Import Data
+        </h1>
+        <p className="text-slate-400 mt-1">
+          Import bank statements and factoring reports automatically
+        </p>
+      </div>
+
+      {/* Tab Selector */}
+      <div className="flex gap-2">
+        <button
+          onClick={() => setActiveTab("bank")}
+          className={cn(
+            "flex-1 flex items-center gap-3 p-4 rounded-xl border-2 transition-all",
+            activeTab === "bank"
+              ? "border-amber-500/50 bg-amber-500/5"
+              : "border-slate-700 hover:border-slate-600 bg-slate-900/50"
+          )}
+        >
+          <div
+            className={cn(
+              "w-12 h-12 rounded-xl flex items-center justify-center",
+              activeTab === "bank"
+                ? "bg-amber-500/20 text-amber-500"
+                : "bg-slate-800 text-slate-400"
+            )}
+          >
+            <Building2 className="w-6 h-6" />
+          </div>
+          <div className="text-left">
+            <h3 className="font-semibold text-white">Bank Statement</h3>
+            <p className="text-xs text-slate-400">
+              Import RBC CSV transactions
+            </p>
+          </div>
+        </button>
+
+        <button
+          onClick={() => setActiveTab("factoring")}
+          className={cn(
+            "flex-1 flex items-center gap-3 p-4 rounded-xl border-2 transition-all",
+            activeTab === "factoring"
+              ? "border-amber-500/50 bg-amber-500/5"
+              : "border-slate-700 hover:border-slate-600 bg-slate-900/50"
+          )}
+        >
+          <div
+            className={cn(
+              "w-12 h-12 rounded-xl flex items-center justify-center",
+              activeTab === "factoring"
+                ? "bg-amber-500/20 text-amber-500"
+                : "bg-slate-800 text-slate-400"
+            )}
+          >
+            <Percent className="w-6 h-6" />
+          </div>
+          <div className="text-left">
+            <h3 className="font-semibold text-white">Factoring Reports</h3>
+            <p className="text-xs text-slate-400">
+              Import J D Factors PDF reports
+            </p>
+          </div>
+        </button>
+      </div>
+
+      {/* Content */}
+      <AnimatePresence mode="wait">
+        {activeTab === "bank" ? (
+          <motion.div
+            key="bank"
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: 20 }}
+          >
+            <BankImportSection />
+          </motion.div>
+        ) : (
+          <motion.div
+            key="factoring"
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -20 }}
+          >
+            <FactoringImportSection />
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+// =============================================
+// BANK IMPORT SECTION
+// =============================================
+
+function BankImportSection() {
+  const queryClient = useQueryClient();
+  const [step, setStep] = useState<ImportStep>("upload");
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [transactions, setTransactions] = useState<BankTransaction[]>([]);
+  const [summary, setSummary] = useState<BankImportSummary | null>(null);
+  const [importResult, setImportResult] = useState<any>(null);
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.name.endsWith(".csv")) {
+      toast.error("Please upload a CSV file");
+      return;
+    }
+
+    setIsProcessing(true);
+    toast.loading("Parsing bank statement...", { id: "bank-parse" });
+
+    try {
+      const csvContent = await file.text();
+      const result = await bankImportApi.parseCSV(csvContent);
+
+      // Mark all transactions as selected by default
+      const withSelection = result.transactions.map((tx) => ({
+        ...tx,
+        selected: tx.type === "expense" || tx.type === "income",
+      }));
+
+      setTransactions(withSelection);
+      setSummary(result.summary);
+      setStep("review");
+      toast.success(
+        `Found ${result.summary.total_transactions} transactions`,
+        { id: "bank-parse" }
+      );
+    } catch (error: any) {
+      toast.error(error.message || "Failed to parse CSV", {
+        id: "bank-parse",
+      });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const toggleTransaction = (index: number) => {
+    setTransactions((prev) =>
+      prev.map((tx) =>
+        tx.index === index ? { ...tx, selected: !tx.selected } : tx
+      )
+    );
+  };
+
+  const selectAll = (type: string) => {
+    setTransactions((prev) =>
+      prev.map((tx) => (tx.type === type ? { ...tx, selected: true } : tx))
+    );
+  };
+
+  const deselectAll = () => {
+    setTransactions((prev) => prev.map((tx) => ({ ...tx, selected: false })));
+  };
+
+  const handleImport = async () => {
+    const selected = transactions.filter((tx) => tx.selected);
+    if (selected.length === 0) {
+      toast.error("Please select at least one transaction to import");
+      return;
+    }
+
+    setIsProcessing(true);
+    toast.loading(`Importing ${selected.length} transactions...`, {
+      id: "bank-import",
+    });
+
+    try {
+      const result = await bankImportApi.importTransactions(selected);
+      setImportResult(result);
+      setStep("done");
+
+      queryClient.invalidateQueries({ queryKey: ["expenses"] });
+      queryClient.invalidateQueries({ queryKey: ["revenues"] });
+      queryClient.invalidateQueries({ queryKey: ["summary"] });
+      queryClient.invalidateQueries({ queryKey: ["revenue-summary"] });
+
+      toast.success(
+        `Imported ${result.expenses_created} expenses, ${result.revenues_created} revenues`,
+        { id: "bank-import" }
+      );
+    } catch (error: any) {
+      toast.error(error.message || "Import failed", { id: "bank-import" });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const reset = () => {
+    setStep("upload");
+    setTransactions([]);
+    setSummary(null);
+    setImportResult(null);
+  };
+
+  if (step === "upload") {
+    return (
+      <div className="card p-8">
+        <div className="text-center">
+          <div className="w-16 h-16 rounded-2xl bg-slate-800 flex items-center justify-center mx-auto mb-4">
+            <FileSpreadsheet className="w-8 h-8 text-slate-400" />
+          </div>
+          <h3 className="text-lg font-semibold text-white mb-2">
+            Upload RBC Bank Statement
+          </h3>
+          <p className="text-slate-400 text-sm mb-6">
+            Download your transactions from RBC Online Banking as CSV and upload
+            here. AI will automatically categorize each transaction.
+          </p>
+
+          <label className="btn-primary inline-flex cursor-pointer">
+            <input
+              type="file"
+              accept=".csv"
+              onChange={handleFileUpload}
+              className="hidden"
+              disabled={isProcessing}
+            />
+            {isProcessing ? (
+              <>
+                <Loader2 className="w-5 h-5 animate-spin" />
+                Processing...
+              </>
+            ) : (
+              <>
+                <Upload className="w-5 h-5" />
+                Select CSV File
+              </>
+            )}
+          </label>
+
+          <div className="mt-6 p-4 rounded-xl bg-slate-800/50 text-left">
+            <h4 className="text-sm font-medium text-white mb-2">
+              How to download from RBC:
+            </h4>
+            <ol className="text-xs text-slate-400 space-y-1 list-decimal list-inside">
+              <li>Log in to RBC Online Banking</li>
+              <li>
+                Go to your Business Chequing account {">"} Account Activity
+              </li>
+              <li>Select date range and click &quot;Download Transactions&quot;</li>
+              <li>Choose CSV format and download</li>
+              <li>Upload the downloaded file here</li>
+            </ol>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === "done") {
+    return (
+      <div className="card p-8 text-center">
+        <CheckCircle className="w-16 h-16 text-emerald-500 mx-auto mb-4" />
+        <h3 className="text-xl font-semibold text-white mb-2">
+          Import Complete!
+        </h3>
+        <div className="space-y-2 mb-6">
+          {importResult?.expenses_created > 0 && (
+            <p className="text-slate-300">
+              <span className="text-red-400 font-bold">
+                {importResult.expenses_created}
+              </span>{" "}
+              expenses created
+            </p>
+          )}
+          {importResult?.revenues_created > 0 && (
+            <p className="text-slate-300">
+              <span className="text-emerald-400 font-bold">
+                {importResult.revenues_created}
+              </span>{" "}
+              revenue entries created
+            </p>
+          )}
+          {importResult?.skipped > 0 && (
+            <p className="text-slate-500">
+              {importResult.skipped} transactions skipped (transfers/draws)
+            </p>
+          )}
+        </div>
+        <button onClick={reset} className="btn-primary">
+          Import Another Statement
+        </button>
+      </div>
+    );
+  }
+
+  // Review step
+  const selectedCount = transactions.filter((tx) => tx.selected).length;
+  const selectedExpenses = transactions.filter(
+    (tx) => tx.selected && tx.type === "expense"
+  );
+  const selectedIncome = transactions.filter(
+    (tx) => tx.selected && tx.type === "income"
+  );
+
+  return (
+    <div className="space-y-6">
+      {/* Summary Cards */}
+      {summary && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <MiniStat
+            label="Total Transactions"
+            value={summary.total_transactions.toString()}
+            color="slate"
+          />
+          <MiniStat
+            label="Expenses"
+            value={formatCurrency(summary.total_expenses)}
+            color="red"
+          />
+          <MiniStat
+            label="Income"
+            value={formatCurrency(summary.total_income)}
+            color="green"
+          />
+          <MiniStat
+            label="Transfers"
+            value={formatCurrency(summary.total_transfers)}
+            color="blue"
+          />
+        </div>
+      )}
+
+      {/* Actions Bar */}
+      <div className="card p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <span className="text-sm text-slate-400">
+            <span className="text-white font-bold">{selectedCount}</span> of{" "}
+            {transactions.length} selected
+          </span>
+          <button
+            onClick={() => selectAll("expense")}
+            className="text-xs text-amber-500 hover:text-amber-400"
+          >
+            Select Expenses
+          </button>
+          <button
+            onClick={() => selectAll("income")}
+            className="text-xs text-emerald-500 hover:text-emerald-400"
+          >
+            Select Income
+          </button>
+          <button
+            onClick={deselectAll}
+            className="text-xs text-slate-500 hover:text-slate-400"
+          >
+            Clear All
+          </button>
+        </div>
+        <div className="flex gap-2">
+          <button onClick={reset} className="btn-ghost text-sm">
+            <ArrowLeft className="w-4 h-4" />
+            Back
+          </button>
+          <button
+            onClick={handleImport}
+            disabled={isProcessing || selectedCount === 0}
+            className="btn-primary text-sm"
+          >
+            {isProcessing ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Importing...
+              </>
+            ) : (
+              <>
+                <Download className="w-4 h-4" />
+                Import {selectedCount} Transactions
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+
+      {/* Transaction List */}
+      <div className="card overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-slate-800">
+                <th className="p-3 text-left text-xs font-medium text-slate-500 w-10"></th>
+                <th className="p-3 text-left text-xs font-medium text-slate-500">
+                  Date
+                </th>
+                <th className="p-3 text-left text-xs font-medium text-slate-500">
+                  Vendor / Description
+                </th>
+                <th className="p-3 text-left text-xs font-medium text-slate-500">
+                  Type
+                </th>
+                <th className="p-3 text-left text-xs font-medium text-slate-500">
+                  Category
+                </th>
+                <th className="p-3 text-right text-xs font-medium text-slate-500">
+                  Amount
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {transactions.map((tx) => (
+                <tr
+                  key={tx.index}
+                  onClick={() => toggleTransaction(tx.index)}
+                  className={cn(
+                    "border-b border-slate-800/50 cursor-pointer transition-colors",
+                    tx.selected
+                      ? "bg-amber-500/5 hover:bg-amber-500/10"
+                      : "hover:bg-slate-800/50 opacity-50"
+                  )}
+                >
+                  <td className="p-3">
+                    <div
+                      className={cn(
+                        "w-5 h-5 rounded border-2 flex items-center justify-center transition-colors",
+                        tx.selected
+                          ? "border-amber-500 bg-amber-500"
+                          : "border-slate-600"
+                      )}
+                    >
+                      {tx.selected && (
+                        <Check className="w-3 h-3 text-slate-950" />
+                      )}
+                    </div>
+                  </td>
+                  <td className="p-3 text-sm text-slate-300 whitespace-nowrap">
+                    {tx.transaction_date}
+                  </td>
+                  <td className="p-3">
+                    <p className="text-sm font-medium text-white">
+                      {tx.vendor_name || tx.description1}
+                    </p>
+                    <p className="text-xs text-slate-500 truncate max-w-[200px]">
+                      {tx.description2}
+                    </p>
+                  </td>
+                  <td className="p-3">
+                    <span
+                      className={cn(
+                        "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium",
+                        tx.type === "expense"
+                          ? "bg-red-500/10 text-red-400"
+                          : tx.type === "income"
+                          ? "bg-emerald-500/10 text-emerald-400"
+                          : tx.type === "transfer"
+                          ? "bg-blue-500/10 text-blue-400"
+                          : "bg-orange-500/10 text-orange-400"
+                      )}
+                    >
+                      {tx.type === "expense"
+                        ? "Expense"
+                        : tx.type === "income"
+                        ? "Income"
+                        : tx.type === "transfer"
+                        ? "Transfer"
+                        : "Owner Draw"}
+                    </span>
+                  </td>
+                  <td className="p-3">
+                    <span
+                      className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs"
+                      style={{
+                        backgroundColor: `${
+                          categoryColors[tx.category] || "#6B7280"
+                        }15`,
+                        color: categoryColors[tx.category] || "#6B7280",
+                      }}
+                    >
+                      {categoryLabels[tx.category] || tx.category}
+                    </span>
+                  </td>
+                  <td className="p-3 text-right">
+                    <span
+                      className={cn(
+                        "text-sm font-bold",
+                        (tx.amount_cad || 0) > 0
+                          ? "text-emerald-400"
+                          : "text-red-400"
+                      )}
+                    >
+                      {formatCurrency(tx.amount_cad || 0)}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// =============================================
+// FACTORING IMPORT SECTION
+// =============================================
+
+function FactoringImportSection() {
+  const queryClient = useQueryClient();
+  const [step, setStep] = useState<ImportStep>("upload");
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [reportData, setReportData] = useState<FactoringReportData | null>(
+    null
+  );
+  const [entries, setEntries] = useState<FactoringEntry[]>([]);
+  const [importResult, setImportResult] = useState<any>(null);
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.name.toLowerCase().endsWith(".pdf")) {
+      toast.error("Please upload a PDF file");
+      return;
+    }
+
+    setIsProcessing(true);
+    toast.loading("AI is reading the factoring report...", {
+      id: "factoring-parse",
+    });
+
+    try {
+      const result = await factoringApi.parsePDF(file);
+      setReportData(result);
+
+      // Mark fee entries as selected by default
+      const withSelection = result.entries.map((entry) => ({
+        ...entry,
+        selected: entry.type === "fee" || entry.category === "factoring_fees",
+      }));
+
+      setEntries(withSelection);
+      setStep("review");
+      toast.success(
+        `Parsed ${result.report_type.replace(/_/g, " ")} - ${result.entries.length} entries found`,
+        { id: "factoring-parse" }
+      );
+    } catch (error: any) {
+      toast.error(error.message || "Failed to parse report", {
+        id: "factoring-parse",
+      });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const toggleEntry = (idx: number) => {
+    setEntries((prev) =>
+      prev.map((e, i) => (i === idx ? { ...e, selected: !e.selected } : e))
+    );
+  };
+
+  const handleImport = async () => {
+    const selected = entries.filter((e) => e.selected);
+    if (selected.length === 0) {
+      toast.error("Please select at least one entry to import");
+      return;
+    }
+
+    setIsProcessing(true);
+    toast.loading(`Importing ${selected.length} entries...`, {
+      id: "factoring-import",
+    });
+
+    try {
+      // For USD reports, we need exchange rate
+      const exchangeRate =
+        reportData?.currency === "USD" ? 1.4 : 1.0; // TODO: fetch actual rate
+
+      const result = await factoringApi.importEntries(
+        selected,
+        reportData?.currency || "CAD",
+        exchangeRate
+      );
+
+      setImportResult(result);
+      setStep("done");
+
+      queryClient.invalidateQueries({ queryKey: ["expenses"] });
+      queryClient.invalidateQueries({ queryKey: ["summary"] });
+
+      toast.success(`Imported ${result.expenses_created} factoring expenses`, {
+        id: "factoring-import",
+      });
+    } catch (error: any) {
+      toast.error(error.message || "Import failed", {
+        id: "factoring-import",
+      });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const reset = () => {
+    setStep("upload");
+    setReportData(null);
+    setEntries([]);
+    setImportResult(null);
+  };
+
+  if (step === "upload") {
+    return (
+      <div className="card p-8">
+        <div className="text-center">
+          <div className="w-16 h-16 rounded-2xl bg-slate-800 flex items-center justify-center mx-auto mb-4">
+            <FileText className="w-8 h-8 text-slate-400" />
+          </div>
+          <h3 className="text-lg font-semibold text-white mb-2">
+            Upload J D Factors Report
+          </h3>
+          <p className="text-slate-400 text-sm mb-6">
+            Upload Recourse Reports, Reserve Reports, or Trend Analysis PDFs.
+            <br />
+            AI will extract fees, purchases, and collections automatically.
+          </p>
+
+          <label className="btn-primary inline-flex cursor-pointer">
+            <input
+              type="file"
+              accept=".pdf"
+              onChange={handleFileUpload}
+              className="hidden"
+              disabled={isProcessing}
+            />
+            {isProcessing ? (
+              <>
+                <Loader2 className="w-5 h-5 animate-spin" />
+                Processing...
+              </>
+            ) : (
+              <>
+                <Upload className="w-5 h-5" />
+                Select PDF Report
+              </>
+            )}
+          </label>
+
+          <div className="mt-6 grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="p-3 rounded-xl bg-slate-800/50 text-left">
+              <h4 className="text-sm font-medium text-white mb-1">
+                Recourse Report
+              </h4>
+              <p className="text-xs text-slate-400">
+                Invoices returned by factor
+              </p>
+            </div>
+            <div className="p-3 rounded-xl bg-slate-800/50 text-left">
+              <h4 className="text-sm font-medium text-white mb-1">
+                Reserve Report
+              </h4>
+              <p className="text-xs text-slate-400">
+                Account activity & fees
+              </p>
+            </div>
+            <div className="p-3 rounded-xl bg-slate-800/50 text-left">
+              <h4 className="text-sm font-medium text-white mb-1">
+                Trend Analysis
+              </h4>
+              <p className="text-xs text-slate-400">
+                Monthly summary & totals
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === "done") {
+    return (
+      <div className="card p-8 text-center">
+        <CheckCircle className="w-16 h-16 text-emerald-500 mx-auto mb-4" />
+        <h3 className="text-xl font-semibold text-white mb-2">
+          Import Complete!
+        </h3>
+        <div className="space-y-2 mb-6">
+          {importResult?.expenses_created > 0 && (
+            <p className="text-slate-300">
+              <span className="text-red-400 font-bold">
+                {importResult.expenses_created}
+              </span>{" "}
+              factoring expenses created
+            </p>
+          )}
+          {importResult?.skipped > 0 && (
+            <p className="text-slate-500">
+              {importResult.skipped} entries skipped (non-fee items)
+            </p>
+          )}
+        </div>
+        <button onClick={reset} className="btn-primary">
+          Import Another Report
+        </button>
+      </div>
+    );
+  }
+
+  // Review step
+  const feeEntries = entries.filter(
+    (e) => e.type === "fee" || e.category === "factoring_fees"
+  );
+  const selectedCount = entries.filter((e) => e.selected).length;
+
+  return (
+    <div className="space-y-6">
+      {/* Report Info */}
+      {reportData && (
+        <div className="card p-5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <h3 className="text-lg font-semibold text-white">
+                {reportData.report_type.replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase())}
+              </h3>
+              <p className="text-sm text-slate-400">
+                J D Factors | {reportData.currency} Account ({reportData.client_id})
+              </p>
+            </div>
+            <div className="flex gap-4">
+              <div className="text-right">
+                <p className="text-xs text-slate-500">Total Fees</p>
+                <p className="text-lg font-bold text-red-400">
+                  {formatCurrency(
+                    reportData.totals.total_fees,
+                    reportData.currency
+                  )}
+                </p>
+              </div>
+              {reportData.totals.total_purchases > 0 && (
+                <div className="text-right">
+                  <p className="text-xs text-slate-500">Total Purchases</p>
+                  <p className="text-lg font-bold text-emerald-400">
+                    {formatCurrency(
+                      reportData.totals.total_purchases,
+                      reportData.currency
+                    )}
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Actions Bar */}
+      <div className="card p-4 flex items-center justify-between">
+        <span className="text-sm text-slate-400">
+          <span className="text-white font-bold">{selectedCount}</span> of{" "}
+          {entries.length} entries selected for import
+        </span>
+        <div className="flex gap-2">
+          <button onClick={reset} className="btn-ghost text-sm">
+            <ArrowLeft className="w-4 h-4" />
+            Back
+          </button>
+          <button
+            onClick={handleImport}
+            disabled={isProcessing || selectedCount === 0}
+            className="btn-primary text-sm"
+          >
+            {isProcessing ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Importing...
+              </>
+            ) : (
+              <>
+                <Download className="w-4 h-4" />
+                Import {selectedCount} Entries
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+
+      {/* Entries List */}
+      <div className="card overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-slate-800">
+                <th className="p-3 text-left text-xs font-medium text-slate-500 w-10"></th>
+                <th className="p-3 text-left text-xs font-medium text-slate-500">
+                  Date
+                </th>
+                <th className="p-3 text-left text-xs font-medium text-slate-500">
+                  Description
+                </th>
+                <th className="p-3 text-left text-xs font-medium text-slate-500">
+                  Type
+                </th>
+                <th className="p-3 text-left text-xs font-medium text-slate-500">
+                  Reference
+                </th>
+                <th className="p-3 text-right text-xs font-medium text-slate-500">
+                  Amount ({reportData?.currency})
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {entries.map((entry, idx) => (
+                <tr
+                  key={idx}
+                  onClick={() => toggleEntry(idx)}
+                  className={cn(
+                    "border-b border-slate-800/50 cursor-pointer transition-colors",
+                    entry.selected
+                      ? "bg-amber-500/5 hover:bg-amber-500/10"
+                      : "hover:bg-slate-800/50 opacity-50"
+                  )}
+                >
+                  <td className="p-3">
+                    <div
+                      className={cn(
+                        "w-5 h-5 rounded border-2 flex items-center justify-center transition-colors",
+                        entry.selected
+                          ? "border-amber-500 bg-amber-500"
+                          : "border-slate-600"
+                      )}
+                    >
+                      {entry.selected && (
+                        <Check className="w-3 h-3 text-slate-950" />
+                      )}
+                    </div>
+                  </td>
+                  <td className="p-3 text-sm text-slate-300 whitespace-nowrap">
+                    {entry.date || "-"}
+                  </td>
+                  <td className="p-3">
+                    <p className="text-sm font-medium text-white">
+                      {entry.description}
+                    </p>
+                    {entry.debtor_name && (
+                      <p className="text-xs text-slate-500">
+                        {entry.debtor_name}
+                      </p>
+                    )}
+                  </td>
+                  <td className="p-3">
+                    <span
+                      className={cn(
+                        "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium",
+                        entry.type === "fee"
+                          ? "bg-red-500/10 text-red-400"
+                          : entry.type === "purchase"
+                          ? "bg-blue-500/10 text-blue-400"
+                          : entry.type === "collection"
+                          ? "bg-emerald-500/10 text-emerald-400"
+                          : entry.type === "recourse"
+                          ? "bg-orange-500/10 text-orange-400"
+                          : "bg-purple-500/10 text-purple-400"
+                      )}
+                    >
+                      {entry.type.replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase())}
+                    </span>
+                  </td>
+                  <td className="p-3 text-sm text-slate-400">
+                    {entry.reference || "-"}
+                  </td>
+                  <td className="p-3 text-right">
+                    <span
+                      className={cn(
+                        "text-sm font-bold",
+                        entry.type === "fee" || entry.type === "recourse"
+                          ? "text-red-400"
+                          : "text-emerald-400"
+                      )}
+                    >
+                      {entry.amount > 0
+                        ? formatCurrency(entry.amount, reportData?.currency)
+                        : "-"}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// =============================================
+// SHARED COMPONENTS
+// =============================================
+
+function MiniStat({
+  label,
+  value,
+  color,
+}: {
+  label: string;
+  value: string;
+  color: "slate" | "red" | "green" | "blue";
+}) {
+  const colorClasses = {
+    slate: "text-slate-300",
+    red: "text-red-400",
+    green: "text-emerald-400",
+    blue: "text-blue-400",
+  };
+
+  return (
+    <div className="card p-3">
+      <p className="text-xs text-slate-500 mb-1">{label}</p>
+      <p className={cn("text-lg font-bold", colorClasses[color])}>{value}</p>
+    </div>
+  );
+}

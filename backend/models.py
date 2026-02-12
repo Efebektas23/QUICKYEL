@@ -17,13 +17,19 @@ class ExpenseCategory(enum.Enum):
     """CRA T2125 compliant expense categories."""
     FUEL = "fuel"
     MAINTENANCE_REPAIRS = "maintenance_repairs"
-    INSURANCE = "insurance"  # NEW: Truck insurance, cargo, liability
+    INSURANCE = "insurance"  # Truck insurance, cargo, liability
     LICENSES_DUES = "licenses_dues"
     TOLLS_SCALES = "tolls_scales"
     MEALS_ENTERTAINMENT = "meals_entertainment"
     TRAVEL_LODGING = "travel_lodging"
     OFFICE_ADMIN = "office_admin"
-    OTHER_EXPENSES = "other_expenses"  # NEW: Catch-all for business expenses
+    FACTORING_FEES = "factoring_fees"  # Factoring commission/fees (J D Factors etc.)
+    PAYROLL = "payroll"  # Employee wages, contractor payments
+    SUBCONTRACTOR = "subcontractor"  # Subcontractor/driver payments
+    PROFESSIONAL_FEES = "professional_fees"  # Accounting, legal, consulting
+    RENT_LEASE = "rent_lease"  # Equipment/vehicle lease payments
+    LOAN_INTEREST = "loan_interest"  # Loan interest payments (not principal)
+    OTHER_EXPENSES = "other_expenses"  # Catch-all for business expenses
     UNCATEGORIZED = "uncategorized"
 
 
@@ -31,6 +37,8 @@ class PaymentSource(enum.Enum):
     """Payment source classification."""
     COMPANY_CARD = "company_card"
     PERSONAL_CARD = "personal_card"  # Due to Shareholder
+    BANK_CHECKING = "bank_checking"  # Checking account (direct debit, auto-payment)
+    E_TRANSFER = "e_transfer"  # Interac e-Transfer
     UNKNOWN = "unknown"
 
 
