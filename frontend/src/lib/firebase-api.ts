@@ -1133,6 +1133,156 @@ export const bankImportApi = {
   },
 
   /**
+   * Preview bulk delete: count records that would be deleted for a given date range.
+   */
+  bulkDeletePreview: async (startDate: Date, endDate: Date): Promise<{
+    expenses_count: number;
+    expenses_total: number;
+    revenues_count: number;
+    revenues_total: number;
+    fingerprints_count: number;
+  }> => {
+    await ensureAuth();
+    let expenses_count = 0;
+    let expenses_total = 0;
+    let revenues_count = 0;
+    let revenues_total = 0;
+    let fingerprints_count = 0;
+
+    // Count expenses in date range
+    const expSnap = await getDocs(collection(db, EXPENSES_COLLECTION));
+    expSnap.forEach((docSnap) => {
+      const data = docSnap.data();
+      const txDate = data.transaction_date
+        ? (typeof data.transaction_date === "string"
+          ? new Date(data.transaction_date)
+          : data.transaction_date.toDate?.() || new Date(data.transaction_date))
+        : null;
+      if (txDate && txDate >= startDate && txDate <= endDate) {
+        expenses_count++;
+        expenses_total += data.cad_amount || 0;
+      }
+    });
+
+    // Count revenues in date range
+    const revSnap = await getDocs(collection(db, REVENUE_COLLECTION));
+    revSnap.forEach((docSnap) => {
+      const data = docSnap.data();
+      const txDate = data.date
+        ? (typeof data.date === "string"
+          ? new Date(data.date)
+          : data.date.toDate?.() || new Date(data.date))
+        : null;
+      if (txDate && txDate >= startDate && txDate <= endDate) {
+        revenues_count++;
+        revenues_total += data.amount_cad || 0;
+      }
+    });
+
+    // Count fingerprints (all of them for now since they don't have dates)
+    fingerprints_count = expenses_count + revenues_count;
+
+    return { expenses_count, expenses_total, revenues_count, revenues_total, fingerprints_count };
+  },
+
+  /**
+   * Bulk delete all data (expenses, revenues, fingerprints) within a date range.
+   * If deleteAll=true, deletes ALL data regardless of date.
+   */
+  bulkDelete: async (startDate: Date, endDate: Date, deleteAll = false): Promise<{
+    expenses_deleted: number;
+    revenues_deleted: number;
+    fingerprints_deleted: number;
+    total_expenses_amount: number;
+    total_revenues_amount: number;
+  }> => {
+    await ensureAuth();
+    let expenses_deleted = 0;
+    let revenues_deleted = 0;
+    let fingerprints_deleted = 0;
+    let total_expenses_amount = 0;
+    let total_revenues_amount = 0;
+
+    const fingerprintsToDelete: string[] = [];
+
+    // Delete expenses
+    const expSnap = await getDocs(collection(db, EXPENSES_COLLECTION));
+    for (const docSnap of expSnap.docs) {
+      const data = docSnap.data();
+      let shouldDelete = deleteAll;
+
+      if (!deleteAll) {
+        const txDate = data.transaction_date
+          ? (typeof data.transaction_date === "string"
+            ? new Date(data.transaction_date)
+            : data.transaction_date.toDate?.() || new Date(data.transaction_date))
+          : null;
+        shouldDelete = txDate !== null && txDate >= startDate && txDate <= endDate;
+      }
+
+      if (shouldDelete) {
+        if (data.import_fingerprint) {
+          fingerprintsToDelete.push(data.import_fingerprint);
+        }
+        await deleteDoc(docSnap.ref);
+        expenses_deleted++;
+        total_expenses_amount += data.cad_amount || 0;
+      }
+    }
+
+    // Delete revenues
+    const revSnap = await getDocs(collection(db, REVENUE_COLLECTION));
+    for (const docSnap of revSnap.docs) {
+      const data = docSnap.data();
+      let shouldDelete = deleteAll;
+
+      if (!deleteAll) {
+        const txDate = data.date
+          ? (typeof data.date === "string"
+            ? new Date(data.date)
+            : data.date.toDate?.() || new Date(data.date))
+          : null;
+        shouldDelete = txDate !== null && txDate >= startDate && txDate <= endDate;
+      }
+
+      if (shouldDelete) {
+        if (data.import_fingerprint) {
+          fingerprintsToDelete.push(data.import_fingerprint);
+        }
+        await deleteDoc(docSnap.ref);
+        revenues_deleted++;
+        total_revenues_amount += data.amount_cad || 0;
+      }
+    }
+
+    // Delete fingerprints
+    if (deleteAll) {
+      // Delete ALL fingerprints
+      const fpSnap = await getDocs(collection(db, IMPORT_HASHES_COLLECTION));
+      for (const docSnap of fpSnap.docs) {
+        await deleteDoc(docSnap.ref);
+        fingerprints_deleted++;
+      }
+    } else {
+      // Delete only fingerprints for deleted records
+      for (const fp of fingerprintsToDelete) {
+        try {
+          await deleteDoc(doc(db, IMPORT_HASHES_COLLECTION, fp));
+          fingerprints_deleted++;
+        } catch { /* ignore */ }
+      }
+    }
+
+    return {
+      expenses_deleted,
+      revenues_deleted,
+      fingerprints_deleted,
+      total_expenses_amount: Math.round(total_expenses_amount * 100) / 100,
+      total_revenues_amount: Math.round(total_revenues_amount * 100) / 100,
+    };
+  },
+
+  /**
    * Import selected bank transactions as expenses/revenue into Firestore.
    * Includes smart duplicate prevention:
    *   - If a fingerprint exists AND the existing record has valid data → skip (true duplicate)

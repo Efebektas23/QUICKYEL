@@ -211,6 +211,259 @@ export default function ImportPage() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Data Management Section */}
+      <DataManagementSection />
+    </div>
+  );
+}
+
+// =============================================
+// DATA MANAGEMENT SECTION
+// =============================================
+
+type DeletePeriod = "custom" | "all" | "2025" | "2026" | "2025-Q1" | "2025-Q2" | "2025-Q3" | "2025-Q4" | "2026-Q1" | "2026-Q2" | "2026-Q3" | "2026-Q4";
+
+const PERIOD_OPTIONS: { value: DeletePeriod; label: string; start: string; end: string }[] = [
+  { value: "all", label: "ALL DATA (Everything)", start: "2020-01-01", end: "2030-12-31" },
+  { value: "2025", label: "Full Year 2025", start: "2025-01-01", end: "2025-12-31" },
+  { value: "2026", label: "Full Year 2026", start: "2026-01-01", end: "2026-12-31" },
+  { value: "2025-Q1", label: "2025 Q1 (Jan-Mar)", start: "2025-01-01", end: "2025-03-31" },
+  { value: "2025-Q2", label: "2025 Q2 (Apr-Jun)", start: "2025-04-01", end: "2025-06-30" },
+  { value: "2025-Q3", label: "2025 Q3 (Jul-Sep)", start: "2025-07-01", end: "2025-09-30" },
+  { value: "2025-Q4", label: "2025 Q4 (Oct-Dec)", start: "2025-10-01", end: "2025-12-31" },
+  { value: "2026-Q1", label: "2026 Q1 (Jan-Mar)", start: "2026-01-01", end: "2026-03-31" },
+  { value: "2026-Q2", label: "2026 Q2 (Apr-Jun)", start: "2026-04-01", end: "2026-06-30" },
+  { value: "2026-Q3", label: "2026 Q3 (Jul-Sep)", start: "2026-07-01", end: "2026-09-30" },
+  { value: "2026-Q4", label: "2026 Q4 (Oct-Dec)", start: "2026-10-01", end: "2026-12-31" },
+];
+
+function DataManagementSection() {
+  const queryClient = useQueryClient();
+  const [isOpen, setIsOpen] = useState(false);
+  const [selectedPeriod, setSelectedPeriod] = useState<DeletePeriod>("2025");
+  const [isScanning, setIsScanning] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [preview, setPreview] = useState<{
+    expenses_count: number;
+    expenses_total: number;
+    revenues_count: number;
+    revenues_total: number;
+    fingerprints_count: number;
+  } | null>(null);
+  const [deleteResult, setDeleteResult] = useState<{
+    expenses_deleted: number;
+    revenues_deleted: number;
+    fingerprints_deleted: number;
+    total_expenses_amount: number;
+    total_revenues_amount: number;
+  } | null>(null);
+
+  const getPeriodDates = () => {
+    const option = PERIOD_OPTIONS.find((o) => o.value === selectedPeriod);
+    if (!option) return { start: new Date("2025-01-01"), end: new Date("2025-12-31") };
+    return {
+      start: new Date(option.start + "T00:00:00"),
+      end: new Date(option.end + "T23:59:59"),
+    };
+  };
+
+  const handleScan = async () => {
+    setIsScanning(true);
+    setPreview(null);
+    setDeleteResult(null);
+    try {
+      const { start, end } = getPeriodDates();
+      const result = await bankImportApi.bulkDeletePreview(start, end);
+      setPreview(result);
+    } catch (error: any) {
+      toast.error(error.message || "Failed to scan data");
+    } finally {
+      setIsScanning(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!preview) return;
+    const total = preview.expenses_count + preview.revenues_count;
+    if (total === 0) {
+      toast.error("No records to delete for this period");
+      return;
+    }
+
+    const periodLabel = PERIOD_OPTIONS.find((o) => o.value === selectedPeriod)?.label || selectedPeriod;
+    const confirmed = confirm(
+      `⚠️ DANGER: You are about to permanently delete:\n\n` +
+      `Period: ${periodLabel}\n` +
+      `• ${preview.expenses_count} expenses ($${preview.expenses_total.toLocaleString()} CAD)\n` +
+      `• ${preview.revenues_count} revenues ($${preview.revenues_total.toLocaleString()} CAD)\n` +
+      `• ${preview.fingerprints_count} import fingerprints\n\n` +
+      `This action CANNOT be undone!\n\nType OK to proceed.`
+    );
+
+    if (!confirmed) return;
+
+    setIsDeleting(true);
+    toast.loading("Deleting records...", { id: "bulk-delete" });
+    try {
+      const { start, end } = getPeriodDates();
+      const isAll = selectedPeriod === "all";
+      const result = await bankImportApi.bulkDelete(start, end, isAll);
+      setDeleteResult(result);
+      setPreview(null);
+      queryClient.invalidateQueries({ queryKey: ["expenses"] });
+      queryClient.invalidateQueries({ queryKey: ["revenues"] });
+      queryClient.invalidateQueries({ queryKey: ["summary"] });
+      queryClient.invalidateQueries({ queryKey: ["revenue-summary"] });
+      toast.success(
+        `Deleted ${result.expenses_deleted} expenses + ${result.revenues_deleted} revenues`,
+        { id: "bulk-delete", duration: 6000 }
+      );
+    } catch (error: any) {
+      toast.error(error.message || "Delete failed", { id: "bulk-delete" });
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  return (
+    <div className="border border-slate-700 rounded-xl overflow-hidden">
+      {/* Collapsible Header */}
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className="w-full flex items-center justify-between p-4 bg-slate-900/50 hover:bg-slate-800/50 transition-colors"
+      >
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-lg bg-red-500/10 flex items-center justify-center">
+            <XCircle className="w-5 h-5 text-red-400" />
+          </div>
+          <div className="text-left">
+            <h3 className="font-semibold text-white text-sm">Data Management</h3>
+            <p className="text-xs text-slate-500">Bulk delete expenses, revenues & import data by period</p>
+          </div>
+        </div>
+        <ArrowRight className={cn("w-5 h-5 text-slate-500 transition-transform", isOpen && "rotate-90")} />
+      </button>
+
+      {/* Collapsible Content */}
+      {isOpen && (
+        <div className="p-5 border-t border-slate-700 space-y-5">
+          {/* Period Selector */}
+          <div>
+            <label className="block text-sm font-medium text-slate-300 mb-2">Select Period to Delete</label>
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+              {PERIOD_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  onClick={() => {
+                    setSelectedPeriod(option.value);
+                    setPreview(null);
+                    setDeleteResult(null);
+                  }}
+                  className={cn(
+                    "px-3 py-2 rounded-lg text-xs font-medium border transition-all text-left",
+                    selectedPeriod === option.value
+                      ? option.value === "all"
+                        ? "border-red-500/50 bg-red-500/10 text-red-400"
+                        : "border-amber-500/50 bg-amber-500/10 text-amber-400"
+                      : "border-slate-700 bg-slate-800/50 text-slate-400 hover:border-slate-600"
+                  )}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Scan Button */}
+          <button
+            onClick={handleScan}
+            disabled={isScanning}
+            className="w-full px-4 py-2.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-all flex items-center justify-center gap-2 text-sm font-medium"
+          >
+            {isScanning ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Scanning records...
+              </>
+            ) : (
+              <>
+                <Eye className="w-4 h-4" />
+                Scan &amp; Preview
+              </>
+            )}
+          </button>
+
+          {/* Preview Results */}
+          {preview && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="p-3 rounded-xl bg-red-500/5 border border-red-500/20">
+                  <p className="text-xs text-slate-500 mb-1">Expenses to Delete</p>
+                  <p className="text-lg font-bold text-red-400">{preview.expenses_count}</p>
+                  <p className="text-xs text-slate-400">${preview.expenses_total.toLocaleString(undefined, { minimumFractionDigits: 2 })} CAD</p>
+                </div>
+                <div className="p-3 rounded-xl bg-emerald-500/5 border border-emerald-500/20">
+                  <p className="text-xs text-slate-500 mb-1">Revenues to Delete</p>
+                  <p className="text-lg font-bold text-emerald-400">{preview.revenues_count}</p>
+                  <p className="text-xs text-slate-400">${preview.revenues_total.toLocaleString(undefined, { minimumFractionDigits: 2 })} CAD</p>
+                </div>
+              </div>
+              <div className="p-3 rounded-xl bg-slate-800/50 border border-slate-700 text-center">
+                <p className="text-xs text-slate-500">Total Records</p>
+                <p className="text-2xl font-bold text-white">{preview.expenses_count + preview.revenues_count}</p>
+                <p className="text-xs text-slate-400 mt-1">+ {preview.fingerprints_count} import fingerprints</p>
+              </div>
+
+              {(preview.expenses_count > 0 || preview.revenues_count > 0) ? (
+                <button
+                  onClick={handleDelete}
+                  disabled={isDeleting}
+                  className="w-full px-4 py-3 bg-red-500/20 hover:bg-red-500/30 text-red-400 font-bold rounded-lg border border-red-500/40 transition-all flex items-center justify-center gap-2"
+                >
+                  {isDeleting ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Deleting...
+                    </>
+                  ) : (
+                    <>
+                      <XCircle className="w-4 h-4" />
+                      Delete {preview.expenses_count + preview.revenues_count} Records Permanently
+                    </>
+                  )}
+                </button>
+              ) : (
+                <div className="text-center text-sm text-slate-500 py-2">
+                  No records found for this period.
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Delete Result */}
+          {deleteResult && (
+            <div className="p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-xl">
+              <div className="flex items-center gap-2 text-emerald-400 mb-2">
+                <CheckCircle className="w-5 h-5" />
+                <span className="font-semibold">Deletion Complete</span>
+              </div>
+              <div className="text-sm text-slate-300 space-y-1">
+                <p><span className="text-red-400 font-bold">{deleteResult.expenses_deleted}</span> expenses deleted (${deleteResult.total_expenses_amount.toLocaleString()} CAD)</p>
+                <p><span className="text-emerald-400 font-bold">{deleteResult.revenues_deleted}</span> revenues deleted (${deleteResult.total_revenues_amount.toLocaleString()} CAD)</p>
+                <p><span className="text-blue-400 font-bold">{deleteResult.fingerprints_deleted}</span> import fingerprints cleared</p>
+                <p className="text-xs text-amber-400 mt-3">You can now re-import your CSV/PDF files for correctly categorized data.</p>
+              </div>
+            </div>
+          )}
+
+          {/* Warning */}
+          <div className="flex items-start gap-2 text-xs text-slate-500">
+            <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
+            <p>This permanently deletes records from Firestore. Make sure you have your original CSV/PDF files before deleting, so you can re-import them.</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
