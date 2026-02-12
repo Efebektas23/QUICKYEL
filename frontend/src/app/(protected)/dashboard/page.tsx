@@ -122,13 +122,30 @@ export default function DashboardPage() {
         (sum, r) => sum + (r.amount_cad || 0),
         0
       );
-      const totalOriginalUsd = revenues
-        .filter((r) => r.currency === "USD")
-        .reduce((sum, r) => sum + (r.amount_original || 0), 0);
+      
+      // USD revenue breakdown
+      const usdRevenues = revenues.filter((r) => r.currency === "USD");
+      const cadRevenues = revenues.filter((r) => r.currency !== "USD");
+      const totalOriginalUsd = usdRevenues.reduce(
+        (sum, r) => sum + (r.amount_original || 0),
+        0
+      );
+      const totalUsdConvertedCad = usdRevenues.reduce(
+        (sum, r) => sum + (r.amount_cad || 0),
+        0
+      );
+      const totalOriginalCad = cadRevenues.reduce(
+        (sum, r) => sum + (r.amount_cad || r.amount_original || 0),
+        0
+      );
 
       return {
         total_cad: totalCad,
         total_usd: totalOriginalUsd,
+        total_usd_converted_cad: totalUsdConvertedCad,
+        total_original_cad: totalOriginalCad,
+        usd_count: usdRevenues.length,
+        cad_count: cadRevenues.length,
         count: all.revenues.length,
         verified_count: revenues.length,
       };
@@ -309,7 +326,7 @@ export default function DashboardPage() {
                 </p>
               )}
               <p className="text-xs text-slate-500 mt-1">
-                Total income (CAD) &middot; {revenueSummary?.verified_count || 0} loads
+                All converted to CAD &middot; {revenueSummary?.verified_count || 0} loads
               </p>
             </div>
             <div className="w-10 h-10 rounded-lg bg-emerald-500/20 flex items-center justify-center text-emerald-500">
@@ -335,7 +352,7 @@ export default function DashboardPage() {
                 </p>
               )}
               <p className="text-xs text-slate-500 mt-1">
-                {summary?.totals?.expense_count || 0} verified entries (CAD)
+                {summary?.totals?.expense_count || 0} verified &middot; all in CAD
               </p>
             </div>
             <div className="w-10 h-10 rounded-lg bg-red-500/20 flex items-center justify-center text-red-500">
@@ -392,6 +409,104 @@ export default function DashboardPage() {
           </div>
         </motion.div>
       </div>
+
+      {/* Currency Breakdown */}
+      {!summaryLoading && !revenueLoading && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="card p-6"
+        >
+          <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+            <DollarSign className="w-5 h-5 text-amber-500" />
+            Currency Breakdown
+          </h2>
+          <p className="text-xs text-slate-500 mb-4">
+            All amounts are converted to CAD using Bank of Canada daily exchange rates. Totals above reflect the final CAD equivalents.
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Revenue by Currency */}
+            <div>
+              <h3 className="text-sm font-medium text-slate-400 mb-3">Revenue</h3>
+              <div className="space-y-3">
+                {(revenueSummary?.cad_count || 0) > 0 && (
+                  <div className="flex items-center justify-between p-3 rounded-xl bg-slate-800/50">
+                    <div className="flex items-center gap-2">
+                      <span className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center text-xs font-bold">CA</span>
+                      <div>
+                        <p className="text-sm font-medium text-white">CAD Revenue</p>
+                        <p className="text-xs text-slate-500">{revenueSummary?.cad_count || 0} entries</p>
+                      </div>
+                    </div>
+                    <p className="text-sm font-bold text-white">{formatCurrency(revenueSummary?.total_original_cad || 0)}</p>
+                  </div>
+                )}
+                {(revenueSummary?.usd_count || 0) > 0 && (
+                  <div className="flex items-center justify-between p-3 rounded-xl bg-slate-800/50">
+                    <div className="flex items-center gap-2">
+                      <span className="w-8 h-8 rounded-lg bg-blue-500/10 text-blue-400 flex items-center justify-center text-xs font-bold">US</span>
+                      <div>
+                        <p className="text-sm font-medium text-white">USD Revenue</p>
+                        <p className="text-xs text-slate-500">
+                          {revenueSummary?.usd_count || 0} entries &middot; ${(revenueSummary?.total_usd || 0).toLocaleString("en-CA", { minimumFractionDigits: 2 })} USD
+                        </p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-sm font-bold text-white">{formatCurrency(revenueSummary?.total_usd_converted_cad || 0)}</p>
+                      <p className="text-xs text-slate-500">converted CAD</p>
+                    </div>
+                  </div>
+                )}
+                {(revenueSummary?.verified_count || 0) === 0 && (
+                  <p className="text-sm text-slate-500 text-center py-2">No revenue data</p>
+                )}
+              </div>
+            </div>
+
+            {/* Expenses by Currency */}
+            <div>
+              <h3 className="text-sm font-medium text-slate-400 mb-3">Expenses</h3>
+              <div className="space-y-3">
+                {(summary?.by_currency?.cad?.count || 0) > 0 && (
+                  <div className="flex items-center justify-between p-3 rounded-xl bg-slate-800/50">
+                    <div className="flex items-center gap-2">
+                      <span className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center text-xs font-bold">CA</span>
+                      <div>
+                        <p className="text-sm font-medium text-white">CAD Expenses</p>
+                        <p className="text-xs text-slate-500">{summary?.by_currency?.cad?.count || 0} entries</p>
+                      </div>
+                    </div>
+                    <p className="text-sm font-bold text-white">{formatCurrency(summary?.by_currency?.cad?.original_total || 0)}</p>
+                  </div>
+                )}
+                {(summary?.by_currency?.usd?.count || 0) > 0 && (
+                  <div className="flex items-center justify-between p-3 rounded-xl bg-slate-800/50">
+                    <div className="flex items-center gap-2">
+                      <span className="w-8 h-8 rounded-lg bg-blue-500/10 text-blue-400 flex items-center justify-center text-xs font-bold">US</span>
+                      <div>
+                        <p className="text-sm font-medium text-white">USD Expenses</p>
+                        <p className="text-xs text-slate-500">
+                          {summary?.by_currency?.usd?.count || 0} entries &middot; ${(summary?.by_currency?.usd?.original_total || 0).toLocaleString("en-CA", { minimumFractionDigits: 2 })} USD
+                        </p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-sm font-bold text-white">{formatCurrency(summary?.by_currency?.usd?.converted_cad || 0)}</p>
+                      <p className="text-xs text-slate-500">
+                        avg rate: {(summary?.by_currency?.usd?.avg_rate || 0).toFixed(4)}
+                      </p>
+                    </div>
+                  </div>
+                )}
+                {(summary?.totals?.expense_count || 0) === 0 && (
+                  <p className="text-sm text-slate-500 text-center py-2">No expense data</p>
+                )}
+              </div>
+            </div>
+          </div>
+        </motion.div>
+      )}
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">

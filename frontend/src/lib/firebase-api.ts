@@ -1036,21 +1036,39 @@ export const bankImportApi = {
 
       try {
         if (tx.type === "expense") {
-          // Create expense in Firestore
-          const amount = Math.abs(tx.amount_cad || 0);
+          // Determine if this is a USD or CAD transaction
+          const isUsd = !tx.amount_cad && tx.amount_usd != null && tx.amount_usd !== 0;
+          const originalAmount = Math.abs(isUsd ? (tx.amount_usd || 0) : (tx.amount_cad || 0));
+          const currency = isUsd ? "USD" : "CAD";
+          
+          let exchangeRate = 1.0;
+          let cadAmount = originalAmount;
+          
+          if (isUsd) {
+            // Fetch Bank of Canada exchange rate for the transaction date
+            try {
+              const txDate = tx.transaction_date ? new Date(tx.transaction_date) : new Date();
+              exchangeRate = await revenueApi.fetchExchangeRate(txDate);
+              cadAmount = Math.round(originalAmount * exchangeRate * 100) / 100;
+            } catch {
+              exchangeRate = 1.40; // Fallback
+              cadAmount = Math.round(originalAmount * exchangeRate * 100) / 100;
+            }
+          }
+
           await addDoc(collection(db, EXPENSES_COLLECTION), {
             vendor_name: tx.vendor_name || tx.description1,
             transaction_date: tx.transaction_date,
             category: tx.category || "uncategorized",
-            jurisdiction: "canada",
-            original_amount: amount,
-            original_currency: "CAD",
+            jurisdiction: isUsd ? "usa" : "canada",
+            original_amount: originalAmount,
+            original_currency: currency,
             tax_amount: 0,
             gst_amount: 0,
             hst_amount: 0,
             pst_amount: 0,
-            exchange_rate: 1.0,
-            cad_amount: amount,
+            exchange_rate: exchangeRate,
+            cad_amount: cadAmount,
             card_last_4: null,
             payment_source: tx.payment_source || "bank_checking",
             receipt_image_url: null,
@@ -1067,16 +1085,33 @@ export const bankImportApi = {
           expenses_created++;
           newFingerprints.push(fp);
         } else if (tx.type === "income") {
-          // Create revenue entry in Firestore
-          const amount = Math.abs(tx.amount_cad || 0);
+          // Determine if this is a USD or CAD transaction
+          const isUsd = !tx.amount_cad && tx.amount_usd != null && tx.amount_usd !== 0;
+          const originalAmount = Math.abs(isUsd ? (tx.amount_usd || 0) : (tx.amount_cad || 0));
+          const currency = isUsd ? "USD" : "CAD";
+          
+          let exchangeRate = 1.0;
+          let cadAmount = originalAmount;
+          
+          if (isUsd) {
+            try {
+              const txDate = tx.transaction_date ? new Date(tx.transaction_date) : new Date();
+              exchangeRate = await revenueApi.fetchExchangeRate(txDate);
+              cadAmount = Math.round(originalAmount * exchangeRate * 100) / 100;
+            } catch {
+              exchangeRate = 1.40;
+              cadAmount = Math.round(originalAmount * exchangeRate * 100) / 100;
+            }
+          }
+
           await addDoc(collection(db, REVENUE_COLLECTION), {
             broker_name: tx.vendor_name || tx.description1,
             load_id: null,
             date: tx.transaction_date,
-            amount_original: amount,
-            currency: "CAD",
-            exchange_rate: 1.0,
-            amount_cad: amount,
+            amount_original: originalAmount,
+            currency: currency,
+            exchange_rate: exchangeRate,
+            amount_cad: cadAmount,
             image_url: null,
             status: "verified",
             notes: `[Bank Import] ${tx.notes || ""} | ${tx.description1} - ${tx.description2}`.trim(),
@@ -1757,10 +1792,26 @@ export const exportApi = {
       e_transfer: 0,
       unknown: 0,
     };
+    // Currency breakdown for expenses
+    const by_currency = {
+      cad: { original_total: 0, count: 0 },
+      usd: { original_total: 0, converted_cad: 0, count: 0, avg_rate: 0 },
+    };
     
     expenses.expenses.forEach((expense) => {
       const cadAmount = expense.cad_amount || 0;
       totals.total_cad += cadAmount;
+      
+      // Track by currency
+      const currency = (expense.original_currency || expense.currency || "CAD").toUpperCase();
+      if (currency === "USD") {
+        by_currency.usd.original_total += expense.original_amount || 0;
+        by_currency.usd.converted_cad += cadAmount;
+        by_currency.usd.count += 1;
+      } else {
+        by_currency.cad.original_total += expense.original_amount || cadAmount || 0;
+        by_currency.cad.count += 1;
+      }
       
       // Calculate GST, HST, and PST separately
       // BACKWARD COMPATIBILITY: If gst_amount is 0 or not set, but tax_amount has a value,
@@ -1819,8 +1870,12 @@ export const exportApi = {
     const mealsTotal = by_category["meals_entertainment"]?.total_cad || 0;
     totals.meals_50_percent = mealsTotal * 0.5;
     
+    // Calculate average exchange rate for USD expenses
+    if (by_currency.usd.count > 0 && by_currency.usd.original_total > 0) {
+      by_currency.usd.avg_rate = by_currency.usd.converted_cad / by_currency.usd.original_total;
+    }
     
-    return { totals, by_category, by_payment_source };
+    return { totals, by_category, by_payment_source, by_currency };
   },
 };
 

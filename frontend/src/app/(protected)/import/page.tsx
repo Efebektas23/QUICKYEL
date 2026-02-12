@@ -30,6 +30,7 @@ import {
   bankImportApi,
   factoringApi,
   duplicateCheckApi,
+  revenueApi,
   BankTransaction,
   BankImportSummary,
   FactoringEntry,
@@ -711,9 +712,28 @@ function FactoringImportSection() {
     });
 
     try {
-      // For USD reports, we need exchange rate
-      const exchangeRate =
-        reportData?.currency === "USD" ? 1.4 : 1.0; // TODO: fetch actual rate
+      // For USD reports, fetch the actual Bank of Canada exchange rate
+      let exchangeRate = 1.0;
+      if (reportData?.currency === "USD") {
+        toast.loading("Fetching Bank of Canada exchange rate...", {
+          id: "factoring-import",
+        });
+        try {
+          // Use the date range start or the first entry's date for the rate
+          const rateDate = reportData.date_range?.start
+            ? new Date(reportData.date_range.start)
+            : selected[0]?.date
+            ? new Date(selected[0].date)
+            : new Date();
+          exchangeRate = await revenueApi.fetchExchangeRate(rateDate);
+        } catch {
+          exchangeRate = 1.40; // Fallback if BoC API fails
+          console.warn("Failed to fetch BoC rate, using fallback 1.40");
+        }
+        toast.loading(`Importing with rate: 1 USD = ${exchangeRate.toFixed(4)} CAD...`, {
+          id: "factoring-import",
+        });
+      }
 
       const result = await factoringApi.importEntries(
         selected,
