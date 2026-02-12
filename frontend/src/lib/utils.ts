@@ -11,12 +11,21 @@ export function formatCurrency(
 ): string {
   if (amount === null || amount === undefined) return "-";
 
-  return new Intl.NumberFormat("en-CA", {
-    style: "currency",
-    currency: currency,
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(amount);
+  // Normalize invalid currency codes to CAD
+  const validCurrency = (currency && currency.length === 3 && currency !== "MIXED")
+    ? currency.toUpperCase()
+    : "CAD";
+
+  try {
+    return new Intl.NumberFormat("en-CA", {
+      style: "currency",
+      currency: validCurrency,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(amount);
+  } catch {
+    return `$${amount.toFixed(2)} ${validCurrency}`;
+  }
 }
 
 export function formatDate(
