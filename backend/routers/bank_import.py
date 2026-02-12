@@ -35,14 +35,29 @@ COMPANY CONTEXT:
 - Common vendors: ICBC (insurance), CAFO Inc (insurance), J D Factors (factoring)
 - Has "TCH CANADA" / "Business PAD" recurring payments (truck lease or equipment payments)
 - Company has two RBC accounts: one CAD (07760-1001270) and one USD (07760-4001350)
+- Owner names: "Yeliz Bektas", "Ozan Bektas"
+
+⚠️ CRITICAL - MUST CLASSIFY THESE AS "transfer" (NOT income, NOT expense):
+   - "Funds transfer" (ANY direction, positive or negative) = ALWAYS "transfer"
+   - "PAYMENT - THANK YOU / PAIEMENT - MERCI" = Credit card payment = ALWAYS "transfer"
+   - "Online Banking transfer" = ALWAYS "transfer"
+   - "Credit Memo" about currency exchange or internal = ALWAYS "transfer"
+   - e-Transfer from owner/family (Yeliz Bektas, Ozan Bektas) = ALWAYS "transfer"
+   - Any positive amount at a retail store (refund/return) = "transfer"
+
+⚠️ CRITICAL - MUST CLASSIFY THESE AS "owner_draw" (NOT expense):
+   - "Cash withdrawal" = ALWAYS "owner_draw"
+   - "ATM withdrawal" = ALWAYS "owner_draw"
+   - "Debit Memo" + "OWNER DRAW" = ALWAYS "owner_draw"
+   - e-Transfer SENT to owner/family (Yeliz Bektas, Ozan Bektas) = ALWAYS "owner_draw"
 
 TRANSACTION CLASSIFICATION RULES:
 
-1. INCOME (positive amounts) - classify as "income":
-   - "Misc Payment" + "J D FACTORS" = Factoring payment received → "income" (both CAD and USD accounts)
-   - "Credit Memo" = Bank credit → "income"
-   - "Deposit" = Cash or cheque deposit → "income"
-   - Any other positive amount = incoming money → "income"
+1. INCOME (positive amounts) - classify as "income" ONLY for real business revenue:
+   - "Misc Payment" + "J D FACTORS" = Factoring payment received → "income"
+   - "Deposit" = Cash or cheque deposit → "income" (unless description says otherwise)
+   - "CASH BACK REWARD" = "income" (bank reward)
+   - ⚠️ NEVER classify "Funds transfer", "PAYMENT - THANK YOU", "Credit Memo" as income!
 
 2. EXPENSES (negative amounts) - classify with one of these categories:
    - "insurance": ICBC, CAFO Inc, any insurance premium
@@ -50,27 +65,27 @@ TRANSACTION CLASSIFICATION RULES:
    - "office_admin": "Monthly fee", "Electronic transaction fee", "Bill Payment PAY-FILE FEES", "INTERAC e-Transfer fee", "Service fee", "Items on deposit fee", "In branch cash deposited fee", "Online Banking wire fee", bank charges
    - "factoring_fees": Any J D Factors fees or charges (NOT incoming payments)
    - "other_expenses": "COMMERCIAL TAXES", "EMPTX", tax remittances
-   - "rent_lease": "Business PAD" + "TCH CANADA" = truck/equipment lease payments, also regular lease payments
-   - "subcontractor": e-Transfer to known contractors/drivers for services
+   - "rent_lease": "Business PAD" + "TCH CANADA" = truck/equipment lease payments
+   - "subcontractor": e-Transfer to known contractors/drivers
    - "professional_fees": Payments to accountants, lawyers, consultants
-   - "loan_interest": Loan payments (mark as loan_interest for the interest portion)
-   - "fuel": Gas station, fuel purchases
+   - "loan_interest": Loan payments, "PURCHASE INTEREST"
+   - "fuel": Gas station, fuel, PETRO-CANADA, SHELL
    - "maintenance_repairs": Vehicle repairs, parts
-   - "licenses_dues": Government permits, licenses, registrations
+   - "licenses_dues": Government permits, licenses
    - "tolls_scales": Tolls, bridge fees, scale fees
-   - "meals_entertainment": Restaurants, food
+   - "meals_entertainment": Restaurants, food, DENNY'S, TIM HORTONS
    - "travel_lodging": Hotels, motels
    - "uncategorized": Cannot determine category
+   - ⚠️ NEVER classify "Funds transfer", "Cash withdrawal" as expense!
 
-3. TRANSFERS/NON-BUSINESS (should be flagged):
-   - "Funds transfer" (negative) = Transfer to another account → "transfer" (not expense, not income)
-   - "Funds transfer" (positive) = Transfer received from another account → "transfer" (not income from business)
-   - "Online Banking transfer" = "transfer" (not expense)
-   - "Online Banking wire payment" = Could be an expense or transfer - check context
-   - "e-Transfer sent" to personal recipients (family names like "Yeliz Bektas") = "owner_draw" (not deductible)
-   - "ATM withdrawal" = "owner_draw" (cash taken from business account)
-   - "Cash withdrawal" = "owner_draw" (cash taken from business account)
-   - "Debit Memo" + "OWNERS DRAW" or "OWNER DRAW" = "owner_draw" (not deductible)
+3. TRANSFERS/NON-BUSINESS (MUST flag correctly):
+   - "Funds transfer" (positive OR negative) = ALWAYS "transfer"
+   - "PAYMENT - THANK YOU / PAIEMENT - MERCI" = ALWAYS "transfer" (credit card payment)
+   - "Online Banking transfer" = ALWAYS "transfer"
+   - "Cash withdrawal" = ALWAYS "owner_draw"
+   - "ATM withdrawal" = ALWAYS "owner_draw"
+   - "Debit Memo" + "OWNER" = ALWAYS "owner_draw"
+   - e-Transfer to/from "Yeliz Bektas" or "Ozan Bektas" = "owner_draw" (sent) or "transfer" (received)
 
 4. PAYMENT SOURCE:
    - "bank_checking" for all direct debits, auto-payments, bill payments
@@ -242,6 +257,8 @@ CATEGORIZE ALL {len(transactions)} TRANSACTIONS AND RETURN JSON ARRAY:"""
                 tx["notes"] = ai_data.get("notes", "")
                 tx["confidence"] = ai_data.get("confidence", 0.5)
             
+            # Post-AI validation: override AI decisions for obvious patterns
+            transactions = self._post_ai_validation(transactions)
             return transactions
             
         except json.JSONDecodeError as e:
@@ -251,6 +268,96 @@ CATEGORIZE ALL {len(transactions)} TRANSACTIONS AND RETURN JSON ARRAY:"""
             logger.error(f"AI categorization failed: {str(e)}")
             return self._rule_based_categorize(transactions)
     
+    def _post_ai_validation(self, transactions: List[dict]) -> List[dict]:
+        """
+        Post-AI safety net: forcibly override AI decisions for patterns 
+        that MUST be classified correctly regardless of what AI says.
+        This prevents transfers/owner_draws from being misclassified as expenses/income.
+        """
+        override_count = 0
+        for tx in transactions:
+            desc1 = (tx.get("description1") or "").lower()
+            desc2 = (tx.get("description2") or "").lower()
+            original_type = tx.get("type", "")
+            
+            # === FORCED TRANSFER patterns ===
+            if "funds transfer" in desc1 or "funds transfer" in desc2:
+                if tx.get("type") != "transfer":
+                    logger.info(f"Override: '{tx.get('description1')}' from '{original_type}' to 'transfer'")
+                    tx["type"] = "transfer"
+                    tx["category"] = "transfer"
+                    tx["vendor_name"] = "Internal Transfer"
+                    tx["notes"] = "Inter-account funds transfer"
+                    override_count += 1
+            
+            elif "payment - thank you" in desc1 or "paiement - merci" in desc1 or "payment - thank you" in desc2:
+                if tx.get("type") != "transfer":
+                    logger.info(f"Override: '{tx.get('description1')}' from '{original_type}' to 'transfer'")
+                    tx["type"] = "transfer"
+                    tx["category"] = "transfer"
+                    tx["vendor_name"] = "Credit Card Payment"
+                    tx["notes"] = "Credit card bill payment (not income/expense)"
+                    override_count += 1
+            
+            elif "online banking transfer" in desc1:
+                if tx.get("type") != "transfer":
+                    tx["type"] = "transfer"
+                    tx["category"] = "transfer"
+                    tx["vendor_name"] = "Internal Transfer"
+                    tx["notes"] = "Online banking transfer"
+                    override_count += 1
+            
+            elif "credit memo" in desc1 and ("exchange" in desc2 or "transfer" in desc2 or "client request" in desc2):
+                if tx.get("type") != "transfer":
+                    tx["type"] = "transfer"
+                    tx["category"] = "transfer"
+                    tx["vendor_name"] = "RBC"
+                    tx["notes"] = "Bank credit memo / internal adjustment"
+                    override_count += 1
+            
+            # === FORCED OWNER_DRAW patterns ===
+            elif "cash withdrawal" in desc1 or "atm withdrawal" in desc1:
+                if tx.get("type") != "owner_draw":
+                    logger.info(f"Override: '{tx.get('description1')}' from '{original_type}' to 'owner_draw'")
+                    tx["type"] = "owner_draw"
+                    tx["category"] = "owner_draw"
+                    tx["vendor_name"] = "Cash Withdrawal"
+                    tx["notes"] = "Cash withdrawal from business account (owner draw)"
+                    override_count += 1
+            
+            elif "debit memo" in desc1 and ("owner" in desc2 or "draw" in desc2):
+                if tx.get("type") != "owner_draw":
+                    tx["type"] = "owner_draw"
+                    tx["category"] = "owner_draw"
+                    tx["vendor_name"] = "Owner Draw"
+                    tx["notes"] = "Owner withdrawal"
+                    override_count += 1
+            
+            # === e-Transfer to/from owner/family ===
+            elif ("e-transfer" in desc1 or "autodeposit" in desc1) and any(name in desc2 for name in ["yeliz bektas", "ozan bektas", "yeliz", "bektas"]):
+                amount = tx.get("amount_cad") or tx.get("amount_usd") or 0
+                if amount > 0:
+                    # Money coming IN from owner = contribution/transfer
+                    if tx.get("type") != "transfer":
+                        tx["type"] = "transfer"
+                        tx["category"] = "transfer"
+                        tx["vendor_name"] = "Owner Contribution"
+                        tx["notes"] = "Owner e-Transfer to business (not revenue)"
+                        override_count += 1
+                else:
+                    # Money going OUT to owner = owner draw
+                    if tx.get("type") != "owner_draw":
+                        tx["type"] = "owner_draw"
+                        tx["category"] = "owner_draw"
+                        tx["vendor_name"] = tx.get("description2", "").split(",")[0] if tx.get("description2") else "Owner"
+                        tx["notes"] = "Personal e-Transfer (owner draw)"
+                        override_count += 1
+        
+        if override_count > 0:
+            logger.warning(f"Post-AI validation: overrode {override_count} AI classifications")
+        
+        return transactions
+    
     def _rule_based_categorize(self, transactions: List[dict]) -> List[dict]:
         """Fallback rule-based categorization when AI is unavailable."""
         for tx in transactions:
@@ -258,24 +365,67 @@ CATEGORIZE ALL {len(transactions)} TRANSACTIONS AND RETURN JSON ARRAY:"""
             desc2 = (tx.get("description2") or "").lower()
             amount = tx.get("amount_cad") or tx.get("amount_usd") or 0
             
-            # Determine type based on amount sign and description
-            if amount > 0:
-                # Positive amounts
+            # ===== FORCED OVERRIDES (regardless of amount sign) =====
+            # These patterns MUST be classified correctly no matter what
+            if "funds transfer" in desc1 or "funds transfer" in desc2:
+                tx["type"] = "transfer"
+                tx["category"] = "transfer"
+                tx["vendor_name"] = "Internal Transfer"
+                tx["notes"] = "Inter-account funds transfer"
+            elif "payment - thank you" in desc1 or "paiement - merci" in desc1:
+                tx["type"] = "transfer"
+                tx["category"] = "transfer"
+                tx["vendor_name"] = "Credit Card Payment"
+                tx["notes"] = "Credit card bill payment (not income/expense)"
+            elif "online banking transfer" in desc1:
+                tx["type"] = "transfer"
+                tx["category"] = "transfer"
+                tx["vendor_name"] = "Internal Transfer"
+                tx["notes"] = "Online banking transfer"
+            elif "cash withdrawal" in desc1 or "atm withdrawal" in desc1:
+                tx["type"] = "owner_draw"
+                tx["category"] = "owner_draw"
+                tx["vendor_name"] = "Cash Withdrawal"
+                tx["notes"] = "Cash withdrawal from business account"
+            elif "debit memo" in desc1 and ("owner" in desc2 or "draw" in desc2):
+                tx["type"] = "owner_draw"
+                tx["category"] = "owner_draw"
+                tx["vendor_name"] = "Owner Draw"
+                tx["notes"] = "Owner withdrawal"
+            elif ("e-transfer" in desc1 or "autodeposit" in desc1) and any(name in desc2 for name in ["yeliz bektas", "ozan bektas", "yeliz", "bektas"]):
+                if amount > 0:
+                    tx["type"] = "transfer"
+                    tx["category"] = "transfer"
+                    tx["vendor_name"] = "Owner Contribution"
+                    tx["notes"] = "Owner e-Transfer to business (not revenue)"
+                else:
+                    tx["type"] = "owner_draw"
+                    tx["category"] = "owner_draw"
+                    tx["vendor_name"] = tx.get("description2", "").split(",")[0] if tx.get("description2") else "Owner"
+                    tx["notes"] = "Personal e-Transfer (owner draw)"
+            elif "credit memo" in desc1 and ("exchange" in desc2 or "transfer" in desc2 or "client request" in desc2):
+                tx["type"] = "transfer"
+                tx["category"] = "transfer"
+                tx["vendor_name"] = "RBC"
+                tx["notes"] = "Bank credit memo / internal adjustment"
+            
+            # ===== POSITIVE AMOUNTS (income) =====
+            elif amount > 0:
                 if "j d factors" in desc2:
                     tx["type"] = "income"
                     tx["category"] = "income"
                     tx["vendor_name"] = "J D Factors"
                     tx["notes"] = "Factoring payment received"
-                elif "funds transfer" in desc1:
-                    tx["type"] = "transfer"
-                    tx["category"] = "transfer"
-                    tx["vendor_name"] = "Internal Transfer"
-                    tx["notes"] = "Internal funds transfer"
                 elif "credit memo" in desc1:
-                    tx["type"] = "transfer"
-                    tx["category"] = "transfer"
+                    tx["type"] = "income"
+                    tx["category"] = "income"
                     tx["vendor_name"] = "RBC"
-                    tx["notes"] = "Bank credit memo"
+                    tx["notes"] = "Bank credit"
+                elif "cash back reward" in desc1:
+                    tx["type"] = "income"
+                    tx["category"] = "income"
+                    tx["vendor_name"] = "RBC"
+                    tx["notes"] = "Cash back reward"
                 elif "deposit" in desc1:
                     tx["type"] = "income"
                     tx["category"] = "income"
@@ -286,12 +436,18 @@ CATEGORIZE ALL {len(transactions)} TRANSACTIONS AND RETURN JSON ARRAY:"""
                     tx["category"] = "income"
                     tx["vendor_name"] = tx.get("description2", "") or tx["description1"]
                     tx["notes"] = "Payment received"
+                elif "e-transfer" in desc1 or "autodeposit" in desc1:
+                    tx["type"] = "income"
+                    tx["category"] = "income"
+                    tx["vendor_name"] = tx.get("description2", "").split(" - ")[-1].strip() if tx.get("description2") else tx["description1"]
+                    tx["notes"] = "e-Transfer received"
                 else:
                     tx["type"] = "income"
                     tx["category"] = "income"
                     tx["vendor_name"] = tx["description1"]
             else:
-                # Negative amounts
+                # ===== NEGATIVE AMOUNTS (expenses) =====
+                # Note: transfers, owner_draws, cash withdrawals are already handled above
                 tx["type"] = "expense"
                 tx["payment_source"] = "bank_checking"
                 
@@ -328,18 +484,10 @@ CATEGORIZE ALL {len(transactions)} TRANSACTIONS AND RETURN JSON ARRAY:"""
                     tx["vendor_name"] = "TCH Canada"
                     tx["notes"] = "Truck/equipment lease payment"
                 elif "e-transfer sent" in desc1 or "e-transfer" in desc1:
-                    # Check if personal (owner draw) or business
-                    personal_names = ["yeliz", "bektas"]
-                    if any(name in desc2 for name in personal_names):
-                        tx["type"] = "owner_draw"
-                        tx["category"] = "owner_draw"
-                        tx["vendor_name"] = tx.get("description2", "").split(",")[0] if tx.get("description2") else ""
-                        tx["notes"] = "Personal e-Transfer (owner draw)"
-                    else:
-                        tx["category"] = "other_expenses"
-                        tx["payment_source"] = "e_transfer"
-                        tx["vendor_name"] = tx.get("description2", "").split(",")[0] if tx.get("description2") else ""
-                        tx["notes"] = "e-Transfer payment"
+                    tx["category"] = "other_expenses"
+                    tx["payment_source"] = "e_transfer"
+                    tx["vendor_name"] = tx.get("description2", "").split(",")[0] if tx.get("description2") else ""
+                    tx["notes"] = "e-Transfer payment"
                 elif "interac e-transfer fee" in desc1:
                     tx["category"] = "office_admin"
                     tx["vendor_name"] = "RBC"
@@ -352,25 +500,22 @@ CATEGORIZE ALL {len(transactions)} TRANSACTIONS AND RETURN JSON ARRAY:"""
                     tx["category"] = "other_expenses"
                     tx["vendor_name"] = tx.get("description2", "")
                     tx["notes"] = "Government payment"
-                elif "atm withdrawal" in desc1 or "cash withdrawal" in desc1:
-                    tx["type"] = "owner_draw"
-                    tx["category"] = "owner_draw"
-                    tx["vendor_name"] = "Cash Withdrawal"
-                    tx["notes"] = "Cash withdrawal from business account"
-                elif "debit memo" in desc1 and ("owner" in desc2 or "draw" in desc2):
-                    tx["type"] = "owner_draw"
-                    tx["category"] = "owner_draw"
-                    tx["vendor_name"] = "Owner Draw"
-                    tx["notes"] = "Owner withdrawal"
-                elif "online banking transfer" in desc1 or "funds transfer" in desc1:
-                    tx["type"] = "transfer"
-                    tx["category"] = "transfer"
-                    tx["vendor_name"] = "Internal Transfer"
-                    tx["notes"] = "Internal funds transfer"
                 elif "online banking wire payment" in desc1:
                     tx["category"] = "other_expenses"
                     tx["vendor_name"] = tx.get("description2", "") or "Wire Payment"
                     tx["notes"] = "Wire payment"
+                elif "purchase interest" in desc1:
+                    tx["category"] = "loan_interest"
+                    tx["vendor_name"] = "RBC"
+                    tx["notes"] = "Credit card / loan interest"
+                elif any(kw in desc1 or kw in desc2 for kw in ["petro-canada", "shell", "esso", "husky", "flying j"]):
+                    tx["category"] = "fuel"
+                    tx["vendor_name"] = tx["description1"].split(" - ")[0].strip() if " - " in tx["description1"] else tx["description1"]
+                    tx["notes"] = "Fuel purchase"
+                elif any(kw in desc1 or kw in desc2 for kw in ["denny", "tim horton", "mcdonald", "subway", "restaurant"]):
+                    tx["category"] = "meals_entertainment"
+                    tx["vendor_name"] = tx["description1"].split(" - ")[0].strip() if " - " in tx["description1"] else tx["description1"]
+                    tx["notes"] = "Meal/food purchase"
                 else:
                     tx["category"] = "uncategorized"
                     tx["vendor_name"] = tx["description1"]

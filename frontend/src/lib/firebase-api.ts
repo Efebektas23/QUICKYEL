@@ -1001,6 +1001,138 @@ export const bankImportApi = {
   },
 
   /**
+   * Clean up misclassified bank import data in Firestore.
+   * Removes:
+   *   - Expenses that are actually transfers (Funds transfer, PAYMENT - THANK YOU)
+   *   - Expenses that are actually owner draws (Cash withdrawal)
+   *   - Revenue entries that are actually transfers (PAYMENT - THANK YOU, Funds transfer)
+   *   - Revenue from owner (e-Transfer from Yeliz/Ozan Bektas)
+   * Also removes corresponding fingerprints from import_hashes.
+   */
+  cleanupMisclassifiedData: async (): Promise<{
+    expenses_deleted: number;
+    revenues_deleted: number;
+    fingerprints_cleared: number;
+    total_amount_removed: number;
+  }> => {
+    await ensureAuth();
+    let expenses_deleted = 0;
+    let revenues_deleted = 0;
+    let fingerprints_cleared = 0;
+    let total_amount_removed = 0;
+
+    // Patterns that should NEVER be an expense
+    const expenseDeletePatterns = [
+      "funds transfer",
+      "payment - thank you",
+      "paiement - merci",
+      "cash withdrawal",
+      "atm withdrawal",
+      "online banking transfer",
+    ];
+
+    // Patterns that should NEVER be revenue
+    const revenueDeletePatterns = [
+      "payment - thank you",
+      "paiement - merci",
+      "funds transfer",
+      "online banking transfer",
+      "credit memo",
+    ];
+
+    // Owner names - e-Transfers from these are NOT business revenue
+    const ownerNames = ["yeliz bektas", "ozan bektas"];
+
+    // 1. Clean up expenses
+    const expQ = query(
+      collection(db, EXPENSES_COLLECTION),
+      where("entry_type", "==", "bank_import")
+    );
+    const expSnap = await getDocs(expQ);
+
+    const expToDelete: { ref: any; fp: string | null; amount: number }[] = [];
+    expSnap.forEach((docSnap) => {
+      const data = docSnap.data();
+      const notes = (data.notes || "").toLowerCase();
+      const vendor = (data.vendor_name || "").toLowerCase();
+
+      const shouldDelete = expenseDeletePatterns.some(
+        (pattern) => notes.includes(pattern) || vendor.includes(pattern)
+      );
+
+      if (shouldDelete) {
+        expToDelete.push({
+          ref: docSnap.ref,
+          fp: data.import_fingerprint || null,
+          amount: data.cad_amount || 0,
+        });
+      }
+    });
+
+    // 2. Clean up revenues
+    let revToDelete: { ref: any; fp: string | null; amount: number }[] = [];
+    try {
+      const revQ = query(
+        collection(db, REVENUE_COLLECTION),
+        where("notes", ">=", "[Bank Import]"),
+        where("notes", "<=", "[Bank Import]\uf8ff")
+      );
+      const revSnap = await getDocs(revQ);
+
+      revSnap.forEach((docSnap) => {
+        const data = docSnap.data();
+        const notes = (data.notes || "").toLowerCase();
+        const broker = (data.broker_name || "").toLowerCase();
+
+        const isTransferPattern = revenueDeletePatterns.some(
+          (pattern) => notes.includes(pattern) || broker.includes(pattern)
+        );
+        const isOwnerTransfer = ownerNames.some(
+          (name) => notes.includes(name) || broker.includes(name)
+        );
+
+        if (isTransferPattern || isOwnerTransfer) {
+          revToDelete.push({
+            ref: docSnap.ref,
+            fp: data.import_fingerprint || null,
+            amount: data.amount_cad || 0,
+          });
+        }
+      });
+    } catch {
+      // Revenue query might fail if no index exists
+      console.warn("Could not query revenues for cleanup");
+    }
+
+    // 3. Delete everything
+    for (const item of expToDelete) {
+      await deleteDoc(item.ref);
+      total_amount_removed += item.amount;
+      expenses_deleted++;
+      if (item.fp) {
+        try {
+          await deleteDoc(doc(db, IMPORT_HASHES_COLLECTION, item.fp));
+          fingerprints_cleared++;
+        } catch { /* ignore */ }
+      }
+    }
+
+    for (const item of revToDelete) {
+      await deleteDoc(item.ref);
+      total_amount_removed += item.amount;
+      revenues_deleted++;
+      if (item.fp) {
+        try {
+          await deleteDoc(doc(db, IMPORT_HASHES_COLLECTION, item.fp));
+          fingerprints_cleared++;
+        } catch { /* ignore */ }
+      }
+    }
+
+    return { expenses_deleted, revenues_deleted, fingerprints_cleared, total_amount_removed };
+  },
+
+  /**
    * Import selected bank transactions as expenses/revenue into Firestore.
    * Includes smart duplicate prevention:
    *   - If a fingerprint exists AND the existing record has valid data → skip (true duplicate)

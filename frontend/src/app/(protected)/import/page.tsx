@@ -44,18 +44,93 @@ type ImportStep = "upload" | "review" | "done";
 
 export default function ImportPage() {
   const [activeTab, setActiveTab] = useState<ActiveTab>("bank");
+  const [isCleaningUp, setIsCleaningUp] = useState(false);
+  const [cleanupResult, setCleanupResult] = useState<{
+    expenses_deleted: number;
+    revenues_deleted: number;
+    fingerprints_cleared: number;
+    total_amount_removed: number;
+  } | null>(null);
+  const queryClient = useQueryClient();
+
+  const handleCleanup = async () => {
+    if (!confirm(
+      "This will remove all misclassified bank import entries:\n\n" +
+      "• Expenses: Funds transfers, Cash withdrawals, Credit card payments\n" +
+      "• Revenues: Credit card payments, Internal transfers, Owner contributions\n\n" +
+      "You can then re-import the CSV files to get correct data.\n\nContinue?"
+    )) return;
+
+    setIsCleaningUp(true);
+    toast.loading("Cleaning up misclassified data...", { id: "cleanup" });
+    try {
+      const result = await bankImportApi.cleanupMisclassifiedData();
+      setCleanupResult(result);
+      queryClient.invalidateQueries({ queryKey: ["expenses"] });
+      queryClient.invalidateQueries({ queryKey: ["revenues"] });
+      queryClient.invalidateQueries({ queryKey: ["summary"] });
+      toast.success(
+        `Cleaned up: ${result.expenses_deleted} bad expenses, ${result.revenues_deleted} bad revenues removed ($${result.total_amount_removed.toLocaleString()} CAD)`,
+        { id: "cleanup", duration: 8000 }
+      );
+    } catch (error: any) {
+      toast.error(error.message || "Cleanup failed", { id: "cleanup" });
+    } finally {
+      setIsCleaningUp(false);
+    }
+  };
 
   return (
     <div className="space-y-8">
       {/* Page Header */}
-      <div>
-        <h1 className="text-3xl font-display font-bold text-white">
-          Import Data
-        </h1>
-        <p className="text-slate-400 mt-1">
-          Import bank statements and factoring reports automatically
-        </p>
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-3xl font-display font-bold text-white">
+            Import Data
+          </h1>
+          <p className="text-slate-400 mt-1">
+            Import bank statements and factoring reports automatically
+          </p>
+        </div>
+        <button
+          onClick={handleCleanup}
+          disabled={isCleaningUp}
+          className="text-xs px-3 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-lg border border-red-500/30 transition-all flex items-center gap-1.5"
+          title="Remove misclassified transfers, owner draws, and credit card payments from expenses/revenue"
+        >
+          {isCleaningUp ? (
+            <>
+              <Loader2 className="w-3 h-3 animate-spin" />
+              Cleaning...
+            </>
+          ) : (
+            <>
+              <XCircle className="w-3 h-3" />
+              Clean Up Bad Data
+            </>
+          )}
+        </button>
       </div>
+
+      {/* Cleanup Result */}
+      {cleanupResult && (cleanupResult.expenses_deleted > 0 || cleanupResult.revenues_deleted > 0) && (
+        <div className="p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-xl">
+          <div className="flex items-center gap-2 text-emerald-400 mb-2">
+            <CheckCircle className="w-5 h-5" />
+            <span className="font-semibold">Cleanup Complete</span>
+          </div>
+          <div className="text-sm text-slate-300 space-y-1">
+            {cleanupResult.expenses_deleted > 0 && (
+              <p>{cleanupResult.expenses_deleted} misclassified expenses removed (transfers, cash withdrawals)</p>
+            )}
+            {cleanupResult.revenues_deleted > 0 && (
+              <p>{cleanupResult.revenues_deleted} misclassified revenues removed (credit card payments, internal transfers)</p>
+            )}
+            <p className="text-amber-400">Total removed: ${cleanupResult.total_amount_removed.toLocaleString(undefined, { minimumFractionDigits: 2 })} CAD</p>
+            <p className="text-xs text-slate-500 mt-2">You can now re-import your CSV files to get correctly categorized data.</p>
+          </div>
+        </div>
+      )}
 
       {/* Tab Selector */}
       <div className="flex gap-2">
