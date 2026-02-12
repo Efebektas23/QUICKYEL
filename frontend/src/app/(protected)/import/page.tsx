@@ -258,12 +258,12 @@ function BankImportSection() {
       queryClient.invalidateQueries({ queryKey: ["summary"] });
       queryClient.invalidateQueries({ queryKey: ["revenue-summary"] });
 
-      const dupeMsg =
-        result.duplicates_skipped > 0
-          ? ` (${result.duplicates_skipped} duplicates skipped)`
-          : "";
+      const extraMsgs: string[] = [];
+      if (result.replaced > 0) extraMsgs.push(`${result.replaced} corrected`);
+      if (result.duplicates_skipped > 0) extraMsgs.push(`${result.duplicates_skipped} duplicates skipped`);
+      const extra = extraMsgs.length > 0 ? ` (${extraMsgs.join(", ")})` : "";
       toast.success(
-        `Imported ${result.expenses_created} expenses, ${result.revenues_created} revenues${dupeMsg}`,
+        `Imported ${result.expenses_created} expenses, ${result.revenues_created} revenues${extra}`,
         { id: "bank-import" }
       );
     } catch (error: any) {
@@ -366,6 +366,15 @@ function BankImportSection() {
             <p className="text-slate-500">
               {importResult.skipped} transactions skipped (transfers/draws)
             </p>
+          )}
+          {importResult?.replaced > 0 && (
+            <div className="flex items-center justify-center gap-2 text-blue-400">
+              <ArrowUpDown className="w-4 h-4" />
+              <p className="text-sm">
+                <span className="font-bold">{importResult.replaced}</span>{" "}
+                bad records corrected and re-imported
+              </p>
+            </div>
           )}
           {importResult?.duplicates_skipped > 0 && (
             <div className="flex items-center justify-center gap-2 text-amber-400">
@@ -780,12 +789,12 @@ function FactoringImportSection() {
       queryClient.invalidateQueries({ queryKey: ["expenses"] });
       queryClient.invalidateQueries({ queryKey: ["summary"] });
 
-      const dupeMsg =
-        result.duplicates_skipped > 0
-          ? ` (${result.duplicates_skipped} duplicates skipped)`
-          : "";
+      const fExtraMsgs: string[] = [];
+      if (result.replaced > 0) fExtraMsgs.push(`${result.replaced} corrected`);
+      if (result.duplicates_skipped > 0) fExtraMsgs.push(`${result.duplicates_skipped} duplicates skipped`);
+      const fExtra = fExtraMsgs.length > 0 ? ` (${fExtraMsgs.join(", ")})` : "";
       toast.success(
-        `Imported ${result.expenses_created} factoring expenses${dupeMsg}`,
+        `Imported ${result.expenses_created} factoring expenses${fExtra}`,
         { id: "factoring-import" }
       );
     } catch (error: any) {
@@ -895,6 +904,15 @@ function FactoringImportSection() {
             <p className="text-slate-500">
               {importResult.skipped} entries skipped (non-fee items)
             </p>
+          )}
+          {importResult?.replaced > 0 && (
+            <div className="flex items-center justify-center gap-2 text-blue-400">
+              <ArrowUpDown className="w-4 h-4" />
+              <p className="text-sm">
+                <span className="font-bold">{importResult.replaced}</span>{" "}
+                bad records corrected and re-imported
+              </p>
+            </div>
           )}
           {importResult?.duplicates_skipped > 0 && (
             <div className="flex items-center justify-center gap-2 text-amber-400">

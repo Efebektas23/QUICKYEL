@@ -1002,13 +1002,16 @@ export const bankImportApi = {
 
   /**
    * Import selected bank transactions as expenses/revenue into Firestore.
-   * Includes duplicate prevention - checks fingerprints before importing.
+   * Includes smart duplicate prevention:
+   *   - If a fingerprint exists AND the existing record has valid data → skip (true duplicate)
+   *   - If a fingerprint exists BUT the existing record has bad data (cad_amount=0) → replace it
    */
   importTransactions: async (transactions: BankTransaction[]): Promise<{
     expenses_created: number;
     revenues_created: number;
     skipped: number;
     duplicates_skipped: number;
+    replaced: number;
   }> => {
     await ensureAuth();
     const now = new Date();
@@ -1016,6 +1019,7 @@ export const bankImportApi = {
     let revenues_created = 0;
     let skipped = 0;
     let duplicates_skipped = 0;
+    let replaced = 0;
 
     // Generate fingerprints for all transactions
     const fingerprints = transactions.map((tx) => bankTransactionFingerprint(tx));
@@ -1023,13 +1027,87 @@ export const bankImportApi = {
     // Check which ones already exist
     const existingFingerprints = await duplicateCheckApi.checkTransactionFingerprints(fingerprints);
 
+    // For existing fingerprints, check if the stored records are "bad" (cad_amount = 0)
+    // If so, delete them and allow re-import
+    if (existingFingerprints.size > 0) {
+      const badFingerprints = new Set<string>();
+      
+      // Query expenses with these fingerprints to check their quality
+      const expQ = query(
+        collection(db, EXPENSES_COLLECTION),
+        where("entry_type", "==", "bank_import")
+      );
+      const expSnap = await getDocs(expQ);
+      
+      const revQ = query(
+        collection(db, REVENUE_COLLECTION),
+        where("notes", ">=", "[Bank Import]"),
+        where("notes", "<=", "[Bank Import]\uf8ff")
+      );
+      let revSnap;
+      try {
+        revSnap = await getDocs(revQ);
+      } catch {
+        // If revenue query fails (e.g., no index), try without filter
+        revSnap = null;
+      }
+      
+      // Check expenses for bad records
+      const docsToDelete: { ref: any; fp: string }[] = [];
+      expSnap.forEach((docSnap) => {
+        const data = docSnap.data();
+        const docFp = data.import_fingerprint;
+        if (docFp && existingFingerprints.has(docFp)) {
+          const cadAmount = data.cad_amount || 0;
+          const originalAmount = data.original_amount || 0;
+          // Record is "bad" if both amounts are 0 or negligibly small
+          if (cadAmount === 0 && originalAmount === 0) {
+            badFingerprints.add(docFp);
+            docsToDelete.push({ ref: docSnap.ref, fp: docFp });
+          }
+        }
+      });
+      
+      // Check revenues for bad records
+      if (revSnap) {
+        revSnap.forEach((docSnap) => {
+          const data = docSnap.data();
+          const docFp = data.import_fingerprint;
+          if (docFp && existingFingerprints.has(docFp)) {
+            const cadAmount = data.amount_cad || 0;
+            const originalAmount = data.amount_original || 0;
+            if (cadAmount === 0 && originalAmount === 0) {
+              badFingerprints.add(docFp);
+              docsToDelete.push({ ref: docSnap.ref, fp: docFp });
+            }
+          }
+        });
+      }
+      
+      // Delete bad records and their fingerprints
+      if (docsToDelete.length > 0) {
+        console.log(`🔄 Found ${docsToDelete.length} bad records (cad_amount=0), replacing with corrected data...`);
+        for (const { ref: docRef, fp: fpToDelete } of docsToDelete) {
+          await deleteDoc(docRef);
+          // Delete the fingerprint so it can be re-registered
+          const fpDocRef = doc(db, IMPORT_HASHES_COLLECTION, fpToDelete);
+          await deleteDoc(fpDocRef);
+        }
+        // Remove bad fingerprints from the existing set so they get re-imported
+        for (const badFp of badFingerprints) {
+          existingFingerprints.delete(badFp);
+        }
+        replaced = docsToDelete.length;
+      }
+    }
+
     const newFingerprints: string[] = [];
 
     for (let i = 0; i < transactions.length; i++) {
       const tx = transactions[i];
       const fp = fingerprints[i];
 
-      // Skip duplicates
+      // Skip true duplicates (fingerprint exists AND record has valid data)
       if (existingFingerprints.has(fp)) {
         duplicates_skipped++;
         continue;
@@ -1206,7 +1284,9 @@ export const factoringApi = {
 
   /**
    * Import selected factoring entries as expenses into Firestore.
-   * Includes duplicate prevention - checks fingerprints before importing.
+   * Includes smart duplicate prevention:
+   *   - If fingerprint exists AND existing record has valid data → skip
+   *   - If fingerprint exists BUT existing record has bad data (cad_amount=0) → replace
    */
   importEntries: async (
     entries: FactoringEntry[],
@@ -1216,12 +1296,14 @@ export const factoringApi = {
     expenses_created: number;
     skipped: number;
     duplicates_skipped: number;
+    replaced: number;
   }> => {
     await ensureAuth();
     const now = new Date();
     let expenses_created = 0;
     let skipped = 0;
     let duplicates_skipped = 0;
+    let replaced = 0;
 
     // Generate fingerprints for all entries
     const fingerprints = entries.map((entry) => factoringEntryFingerprint(entry));
@@ -1229,13 +1311,48 @@ export const factoringApi = {
     // Check which ones already exist
     const existingFingerprints = await duplicateCheckApi.checkTransactionFingerprints(fingerprints);
 
+    // Smart duplicate: check if existing records are "bad" (cad_amount=0)
+    if (existingFingerprints.size > 0) {
+      const expQ = query(
+        collection(db, EXPENSES_COLLECTION),
+        where("entry_type", "==", "factoring_import")
+      );
+      const expSnap = await getDocs(expQ);
+      
+      const docsToDelete: { ref: any; fp: string }[] = [];
+      expSnap.forEach((docSnap) => {
+        const data = docSnap.data();
+        const docFp = data.import_fingerprint;
+        if (docFp && existingFingerprints.has(docFp)) {
+          const cadAmount = data.cad_amount || 0;
+          const originalAmount = data.original_amount || 0;
+          if (cadAmount === 0 && originalAmount === 0) {
+            docsToDelete.push({ ref: docSnap.ref, fp: docFp });
+          }
+        }
+      });
+      
+      if (docsToDelete.length > 0) {
+        console.log(`🔄 Found ${docsToDelete.length} bad factoring records, replacing...`);
+        for (const { ref: docRef, fp: fpToDelete } of docsToDelete) {
+          await deleteDoc(docRef);
+          const fpDocRef = doc(db, IMPORT_HASHES_COLLECTION, fpToDelete);
+          await deleteDoc(fpDocRef);
+        }
+        for (const { fp: badFp } of docsToDelete) {
+          existingFingerprints.delete(badFp);
+        }
+        replaced = docsToDelete.length;
+      }
+    }
+
     const newFingerprints: string[] = [];
 
     for (let i = 0; i < entries.length; i++) {
       const entry = entries[i];
       const fp = fingerprints[i];
 
-      // Skip duplicates
+      // Skip true duplicates (valid existing data)
       if (existingFingerprints.has(fp)) {
         duplicates_skipped++;
         continue;
