@@ -482,6 +482,7 @@ function BankImportSection() {
   const [duplicateWarning, setDuplicateWarning] = useState<string | null>(null);
   const [csvContentRef, setCsvContentRef] = useState<string | null>(null);
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
+  const [expenseMatches, setExpenseMatches] = useState<Map<number, { expenseId: string; expenseData: any; matchScore: number; matchReason: string }>>(new Map());
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -516,6 +517,19 @@ function BankImportSection() {
       toast.loading("Parsing bank statement...", { id: "bank-parse" });
       const result = await bankImportApi.parseCSV(csvContent);
 
+      // 3. Smart match: find bank transactions that match existing receipt expenses
+      toast.loading("Matching with existing expenses...", { id: "bank-parse" });
+      try {
+        const matches = await bankImportApi.matchTransactionsToExistingExpenses(result.transactions);
+        setExpenseMatches(matches);
+        if (matches.size > 0) {
+          console.log(`Found ${matches.size} matches with existing expenses`);
+        }
+      } catch (err) {
+        console.warn("Expense matching failed, continuing without matches:", err);
+        setExpenseMatches(new Map());
+      }
+
       // Mark all transactions as selected by default
       const withSelection = result.transactions.map((tx) => ({
         ...tx,
@@ -525,8 +539,10 @@ function BankImportSection() {
       setTransactions(withSelection);
       setSummary(result.summary);
       setStep("review");
+      
+      const matchCount = expenseMatches.size;
       toast.success(
-        `Found ${result.summary.total_transactions} transactions`,
+        `Found ${result.summary.total_transactions} transactions${matchCount > 0 ? ` (${matchCount} matched to existing)` : ""}`,
         { id: "bank-parse" }
       );
     } catch (error: any) {
@@ -572,7 +588,7 @@ function BankImportSection() {
     );
 
     try {
-      const result = await bankImportApi.importTransactions(selected, forceReimport);
+      const result = await bankImportApi.importTransactions(selected, forceReimport, expenseMatches);
       setImportResult(result);
       setStep("done");
 
@@ -590,6 +606,7 @@ function BankImportSection() {
       queryClient.invalidateQueries({ queryKey: ["revenue-summary"] });
 
       const extraMsgs: string[] = [];
+      if (result.linked > 0) extraMsgs.push(`${result.linked} linked to existing`);
       if (result.replaced > 0) extraMsgs.push(`${result.replaced} corrected`);
       if (result.duplicates_skipped > 0) extraMsgs.push(`${result.duplicates_skipped} duplicates skipped`);
       const extra = extraMsgs.length > 0 ? ` (${extraMsgs.join(", ")})` : "";
@@ -693,6 +710,15 @@ function BankImportSection() {
               revenue entries created
             </p>
           )}
+          {importResult?.linked > 0 && (
+            <div className="flex items-center justify-center gap-2 text-blue-400">
+              <Check className="w-4 h-4" />
+              <p className="text-sm">
+                <span className="font-bold">{importResult.linked}</span>{" "}
+                linked to existing receipt expenses (no duplicates created)
+              </p>
+            </div>
+          )}
           {importResult?.skipped > 0 && (
             <p className="text-slate-500">
               {importResult.skipped} transactions skipped (transfers/draws)
@@ -785,6 +811,25 @@ function BankImportSection() {
             <span className="font-bold">{summary.account_currency} Account</span> detected.
             {" "}All amounts will be converted to CAD using Bank of Canada exchange rates during import.
           </p>
+        </motion.div>
+      )}
+
+      {/* Expense Match Banner */}
+      {expenseMatches.size > 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="flex items-center gap-3 px-4 py-3 bg-blue-500/10 border border-blue-500/20 rounded-xl"
+        >
+          <Check className="w-5 h-5 text-blue-400 flex-shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-blue-400">
+              {expenseMatches.size} transaction{expenseMatches.size > 1 ? "s" : ""} matched to existing receipt expenses
+            </p>
+            <p className="text-xs text-blue-400/70 mt-0.5">
+              These will be linked to your existing records instead of creating duplicates. Look for the blue indicators below.
+            </p>
+          </div>
         </motion.div>
       )}
 
@@ -936,6 +981,14 @@ function BankImportSection() {
                     <p className="text-xs text-slate-500 truncate max-w-[200px]">
                       {tx.description2}
                     </p>
+                    {expenseMatches.has(tx.index) && (
+                      <div className="flex items-center gap-1 mt-1">
+                        <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+                        <span className="text-[10px] text-blue-400 font-medium">
+                          Match: {expenseMatches.get(tx.index)!.expenseData.vendor_name || "receipt expense"} ({expenseMatches.get(tx.index)!.matchReason})
+                        </span>
+                      </div>
+                    )}
                   </td>
                   <td className="p-3">
                     <span

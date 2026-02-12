@@ -1283,19 +1283,161 @@ export const bankImportApi = {
   },
 
   /**
+   * Match bank transactions against existing manually-entered expenses.
+   * Uses amount + date proximity + vendor name similarity to find matches.
+   * Returns a map of transaction index → matched expense doc ID.
+   */
+  matchTransactionsToExistingExpenses: async (
+    transactions: BankTransaction[]
+  ): Promise<Map<number, { expenseId: string; expenseData: any; matchScore: number; matchReason: string }>> => {
+    await ensureAuth();
+    const matches = new Map<number, { expenseId: string; expenseData: any; matchScore: number; matchReason: string }>();
+
+    // Load all manually-entered expenses (NOT from bank_import)
+    // These are the ones created via receipt upload or manual entry
+    const allExpSnap = await getDocs(collection(db, EXPENSES_COLLECTION));
+    const manualExpenses: { id: string; data: any }[] = [];
+
+    allExpSnap.forEach((docSnap) => {
+      const data = docSnap.data();
+      // Only consider non-bank-import entries that haven't been linked yet
+      if (data.entry_type !== "bank_import" && !data.bank_linked) {
+        manualExpenses.push({ id: docSnap.id, data });
+      }
+    });
+
+    if (manualExpenses.length === 0) return matches;
+
+    // Track which expenses have been matched to prevent double-matching
+    const matchedExpenseIds = new Set<string>();
+
+    for (const tx of transactions) {
+      if (tx.type !== "expense") continue;
+
+      const txAmount = Math.abs(tx.amount_cad || tx.amount_usd || 0);
+      if (txAmount === 0) continue;
+
+      const txDate = tx.transaction_date ? new Date(tx.transaction_date) : null;
+      if (!txDate) continue;
+
+      const txVendor = (tx.vendor_name || tx.description1 || "").toLowerCase();
+
+      let bestMatch: { expenseId: string; expenseData: any; score: number; reason: string } | null = null;
+
+      for (const exp of manualExpenses) {
+        if (matchedExpenseIds.has(exp.id)) continue;
+
+        const expData = exp.data;
+        const expAmount = expData.cad_amount || expData.original_amount || 0;
+        const expDate = expData.transaction_date
+          ? (typeof expData.transaction_date === "string"
+            ? new Date(expData.transaction_date)
+            : expData.transaction_date.toDate?.() || new Date(expData.transaction_date))
+          : null;
+        const expVendor = (expData.vendor_name || "").toLowerCase();
+
+        // === SCORING ===
+        let score = 0;
+        const reasons: string[] = [];
+
+        // 1. Amount match (most important)
+        const amountDiff = Math.abs(txAmount - expAmount);
+        const amountPercent = txAmount > 0 ? (amountDiff / txAmount) * 100 : 100;
+
+        if (amountDiff < 0.02) {
+          score += 50; // Exact match
+          reasons.push("exact amount");
+        } else if (amountDiff < 1.0) {
+          score += 40; // Within $1 (rounding differences)
+          reasons.push(`amount ±$${amountDiff.toFixed(2)}`);
+        } else if (amountPercent < 2) {
+          score += 25; // Within 2% (tax/tip differences)
+          reasons.push(`amount ~${amountPercent.toFixed(1)}% diff`);
+        } else {
+          continue; // Amount too different, skip
+        }
+
+        // 2. Date match
+        if (expDate && txDate) {
+          const daysDiff = Math.abs(
+            (txDate.getTime() - expDate.getTime()) / (1000 * 60 * 60 * 24)
+          );
+          if (daysDiff < 1) {
+            score += 30; // Same day
+            reasons.push("same day");
+          } else if (daysDiff <= 3) {
+            score += 20; // Within 3 days (posting lag)
+            reasons.push(`${Math.round(daysDiff)}d apart`);
+          } else if (daysDiff <= 7) {
+            score += 10; // Within a week
+            reasons.push(`${Math.round(daysDiff)}d apart`);
+          } else {
+            continue; // Date too far apart, skip
+          }
+        }
+
+        // 3. Vendor name match
+        if (txVendor && expVendor) {
+          const vendorWords = txVendor.split(/[\s,.\-\/]+/).filter((w: string) => w.length > 2);
+          const expWords = expVendor.split(/[\s,.\-\/]+/).filter((w: string) => w.length > 2);
+          const commonWords = vendorWords.filter((w: string) => 
+            expWords.some((ew: string) => ew.includes(w) || w.includes(ew))
+          );
+          
+          if (txVendor === expVendor) {
+            score += 20;
+            reasons.push("exact vendor");
+          } else if (commonWords.length > 0) {
+            score += 10;
+            reasons.push("vendor partial match");
+          }
+        }
+
+        // Keep best match above threshold
+        if (score >= 60 && (!bestMatch || score > bestMatch.score)) {
+          bestMatch = {
+            expenseId: exp.id,
+            expenseData: expData,
+            score,
+            reason: reasons.join(", "),
+          };
+        }
+      }
+
+      if (bestMatch) {
+        matches.set(tx.index, {
+          expenseId: bestMatch.expenseId,
+          expenseData: bestMatch.expenseData,
+          matchScore: bestMatch.score,
+          matchReason: bestMatch.reason,
+        });
+        matchedExpenseIds.add(bestMatch.expenseId);
+      }
+    }
+
+    return matches;
+  },
+
+  /**
    * Import selected bank transactions as expenses/revenue into Firestore.
    * Includes smart duplicate prevention:
    *   - If a fingerprint exists AND the existing record has valid data → skip (true duplicate)
    *   - If a fingerprint exists BUT the existing record has bad data (cad_amount<0.01) → replace it
    *   - If a fingerprint exists BUT no matching record found (stale) → clear fingerprint, re-import
    *   - If forceReimport=true → delete all existing matching records and re-import everything
+   *   - NEW: Matches bank transactions to existing manual/OCR expenses and links them instead of creating duplicates
    */
-  importTransactions: async (transactions: BankTransaction[], forceReimport = false): Promise<{
+  importTransactions: async (
+    transactions: BankTransaction[],
+    forceReimport = false,
+    matchedExpenses?: Map<number, { expenseId: string; expenseData: any; matchScore: number; matchReason: string }>
+  ): Promise<{
     expenses_created: number;
     revenues_created: number;
     skipped: number;
     duplicates_skipped: number;
     replaced: number;
+    linked: number;
   }> => {
     await ensureAuth();
     const now = new Date();
@@ -1304,6 +1446,7 @@ export const bankImportApi = {
     let skipped = 0;
     let duplicates_skipped = 0;
     let replaced = 0;
+    let linked = 0;
 
     // Generate fingerprints for all transactions
     const fingerprints = transactions.map((tx) => bankTransactionFingerprint(tx));
@@ -1420,53 +1563,72 @@ export const bankImportApi = {
 
       try {
         if (tx.type === "expense") {
-          // Determine if this is a USD or CAD transaction
-          const isUsd = !tx.amount_cad && tx.amount_usd != null && tx.amount_usd !== 0;
-          const originalAmount = Math.abs(isUsd ? (tx.amount_usd || 0) : (tx.amount_cad || 0));
-          const currency = isUsd ? "USD" : "CAD";
+          // Check if this transaction matches an existing manually-entered expense
+          const match = matchedExpenses?.get(tx.index);
           
-          let exchangeRate = 1.0;
-          let cadAmount = originalAmount;
-          
-          if (isUsd) {
-            // Fetch Bank of Canada exchange rate for the transaction date
-            try {
-              const txDate = tx.transaction_date ? new Date(tx.transaction_date) : new Date();
-              exchangeRate = await revenueApi.fetchExchangeRate(txDate);
-              cadAmount = Math.round(originalAmount * exchangeRate * 100) / 100;
-            } catch {
-              exchangeRate = 1.40; // Fallback
-              cadAmount = Math.round(originalAmount * exchangeRate * 100) / 100;
+          if (match) {
+            // LINK to existing expense instead of creating new one
+            const expDocRef = doc(db, EXPENSES_COLLECTION, match.expenseId);
+            await updateDoc(expDocRef, {
+              bank_linked: true,
+              bank_import_date: Timestamp.fromDate(now),
+              bank_description: `${tx.description1} - ${tx.description2}`.trim(),
+              bank_statement_date: tx.transaction_date,
+              bank_match_score: match.matchScore,
+              bank_match_reason: match.matchReason,
+              import_fingerprint: fp,
+              updated_at: Timestamp.fromDate(now),
+            });
+            linked++;
+            newFingerprints.push(fp);
+          } else {
+            // No match - create new expense as before
+            const isUsd = !tx.amount_cad && tx.amount_usd != null && tx.amount_usd !== 0;
+            const originalAmount = Math.abs(isUsd ? (tx.amount_usd || 0) : (tx.amount_cad || 0));
+            const currency = isUsd ? "USD" : "CAD";
+            
+            let exchangeRate = 1.0;
+            let cadAmount = originalAmount;
+            
+            if (isUsd) {
+              try {
+                const txDate = tx.transaction_date ? new Date(tx.transaction_date) : new Date();
+                exchangeRate = await revenueApi.fetchExchangeRate(txDate);
+                cadAmount = Math.round(originalAmount * exchangeRate * 100) / 100;
+              } catch {
+                exchangeRate = 1.40;
+                cadAmount = Math.round(originalAmount * exchangeRate * 100) / 100;
+              }
             }
-          }
 
-          await addDoc(collection(db, EXPENSES_COLLECTION), {
-            vendor_name: tx.vendor_name || tx.description1,
-            transaction_date: tx.transaction_date,
-            category: tx.category || "uncategorized",
-            jurisdiction: isUsd ? "usa" : "canada",
-            original_amount: originalAmount,
-            original_currency: currency,
-            tax_amount: 0,
-            gst_amount: 0,
-            hst_amount: 0,
-            pst_amount: 0,
-            exchange_rate: exchangeRate,
-            cad_amount: cadAmount,
-            card_last_4: null,
-            payment_source: tx.payment_source || "bank_checking",
-            receipt_image_url: null,
-            raw_ocr_text: null,
-            is_verified: true,
-            processing_status: "completed",
-            error_message: null,
-            notes: `[Bank Import] ${tx.notes || ""} | ${tx.description1} - ${tx.description2}`.trim(),
-            entry_type: "bank_import",
-            import_fingerprint: fp,
-            created_at: Timestamp.fromDate(now),
-            updated_at: Timestamp.fromDate(now),
-          });
-          expenses_created++;
+            await addDoc(collection(db, EXPENSES_COLLECTION), {
+              vendor_name: tx.vendor_name || tx.description1,
+              transaction_date: tx.transaction_date,
+              category: tx.category || "uncategorized",
+              jurisdiction: isUsd ? "usa" : "canada",
+              original_amount: originalAmount,
+              original_currency: currency,
+              tax_amount: 0,
+              gst_amount: 0,
+              hst_amount: 0,
+              pst_amount: 0,
+              exchange_rate: exchangeRate,
+              cad_amount: cadAmount,
+              card_last_4: null,
+              payment_source: tx.payment_source || "bank_checking",
+              receipt_image_url: null,
+              raw_ocr_text: null,
+              is_verified: true,
+              processing_status: "completed",
+              error_message: null,
+              notes: `[Bank Import] ${tx.notes || ""} | ${tx.description1} - ${tx.description2}`.trim(),
+              entry_type: "bank_import",
+              import_fingerprint: fp,
+              created_at: Timestamp.fromDate(now),
+              updated_at: Timestamp.fromDate(now),
+            });
+            expenses_created++;
+          }
           newFingerprints.push(fp);
         } else if (tx.type === "income") {
           // Determine if this is a USD or CAD transaction
@@ -1520,7 +1682,7 @@ export const bankImportApi = {
       await duplicateCheckApi.registerTransactionFingerprints(newFingerprints, "bank_import");
     }
 
-    return { expenses_created, revenues_created, skipped, duplicates_skipped, replaced };
+    return { expenses_created, revenues_created, skipped, duplicates_skipped, replaced, linked };
   },
 };
 
