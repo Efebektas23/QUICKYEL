@@ -1072,7 +1072,7 @@ export interface BankTransaction {
   description2: string;
   amount_cad: number | null;
   amount_usd: number | null;
-  type: "expense" | "income" | "transfer" | "owner_draw";
+  type: "expense" | "income" | "transfer" | "owner_draw" | "tax_refund";
   category: string;
   payment_source: string;
   vendor_name: string;
@@ -1154,6 +1154,14 @@ export const bankImportApi = {
       "funds transfer",
       "online banking transfer",
       "credit memo",
+      // Tax refunds from CRA are NOT business revenue
+      "gst",
+      "hst",
+      "receiver general",
+      "rec gen",
+      "canada revenue",
+      "cra",
+      "fed govt",
     ];
 
     // Owner names - e-Transfers from these are NOT business revenue

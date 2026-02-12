@@ -45,6 +45,14 @@ COMPANY CONTEXT:
    - e-Transfer from owner/family (Yeliz Bektas, Ozan Bektas) = ALWAYS "transfer"
    - Any positive amount at a retail store (refund/return) = "transfer"
 
+⚠️ CRITICAL - MUST CLASSIFY THESE AS "tax_refund" (NOT income, NOT expense):
+   - "GST" or "HST" in description = Government tax refund = ALWAYS "tax_refund"
+   - "RECEIVER GENERAL" or "REC GEN" in description (positive amount) = CRA tax refund = ALWAYS "tax_refund"
+   - "FED GOVT" in description (positive amount) = Federal government refund = ALWAYS "tax_refund"
+   - "CANADA REVENUE" or "CRA" in description (positive amount) = Tax refund = ALWAYS "tax_refund"
+   - Any government deposit that is a refund of taxes previously paid = ALWAYS "tax_refund"
+   - Tax refunds are NOT business revenue - they are returns of overpaid tax
+
 ⚠️ CRITICAL - MUST CLASSIFY THESE AS "owner_draw" (NOT expense):
    - "Cash withdrawal" = ALWAYS "owner_draw"
    - "ATM withdrawal" = ALWAYS "owner_draw"
@@ -58,6 +66,7 @@ TRANSACTION CLASSIFICATION RULES:
    - "Deposit" = Cash or cheque deposit → "income" (unless description says otherwise)
    - "CASH BACK REWARD" = "income" (bank reward)
    - ⚠️ NEVER classify "Funds transfer", "PAYMENT - THANK YOU", "Credit Memo" as income!
+   - ⚠️ NEVER classify GST/HST refunds, RECEIVER GENERAL, CRA deposits as income! Use "tax_refund"!
 
 2. EXPENSES (negative amounts) - classify with one of these categories:
    - "insurance": ICBC, CAFO Inc, any insurance premium
@@ -94,8 +103,8 @@ TRANSACTION CLASSIFICATION RULES:
 RESPOND WITH ONLY a JSON array. Each element should have:
 {
   "index": number (0-based row index),
-  "type": "expense" | "income" | "transfer" | "owner_draw",
-  "category": "one of the valid categories or 'income' or 'transfer' or 'owner_draw'",
+  "type": "expense" | "income" | "transfer" | "owner_draw" | "tax_refund",
+  "category": "one of the valid categories or 'income' or 'transfer' or 'owner_draw' or 'tax_refund'",
   "payment_source": "bank_checking" | "e_transfer",
   "vendor_name": "cleaned up vendor/payee name",
   "notes": "brief note about what this transaction is",
@@ -114,7 +123,7 @@ class BankTransaction(BaseModel):
     amount_cad: Optional[float] = None
     amount_usd: Optional[float] = None
     # AI-assigned fields
-    type: str = "expense"  # expense, income, transfer, owner_draw
+    type: str = "expense"  # expense, income, transfer, owner_draw, tax_refund
     category: str = "uncategorized"
     payment_source: str = "bank_checking"
     vendor_name: str = ""
@@ -333,6 +342,27 @@ CATEGORIZE ALL {len(transactions)} TRANSACTIONS AND RETURN JSON ARRAY:"""
                     tx["notes"] = "Owner withdrawal"
                     override_count += 1
             
+            # === FORCED TAX_REFUND patterns (government refunds are NOT income) ===
+            elif any(kw in desc1 or kw in desc2 for kw in ["gst", "hst", "receiver general", "rec gen", "canada revenue", "cra"]):
+                amount = tx.get("amount_cad") or tx.get("amount_usd") or 0
+                if amount > 0 and tx.get("type") != "tax_refund":
+                    logger.info(f"Override: '{tx.get('description1')}' from '{original_type}' to 'tax_refund' (government tax refund)")
+                    tx["type"] = "tax_refund"
+                    tx["category"] = "tax_refund"
+                    tx["vendor_name"] = "CRA / Receiver General"
+                    tx["notes"] = "Government tax refund (GST/HST ITC) - NOT revenue"
+                    override_count += 1
+            
+            elif "fed govt" in desc1 or "fed govt" in desc2:
+                amount = tx.get("amount_cad") or tx.get("amount_usd") or 0
+                if amount > 0 and tx.get("type") != "tax_refund":
+                    logger.info(f"Override: '{tx.get('description1')}' from '{original_type}' to 'tax_refund' (federal govt deposit)")
+                    tx["type"] = "tax_refund"
+                    tx["category"] = "tax_refund"
+                    tx["vendor_name"] = "Federal Government"
+                    tx["notes"] = "Government refund/credit - NOT revenue"
+                    override_count += 1
+            
             # === e-Transfer to/from owner/family ===
             elif ("e-transfer" in desc1 or "autodeposit" in desc1) and any(name in desc2 for name in ["yeliz bektas", "ozan bektas", "yeliz", "bektas"]):
                 amount = tx.get("amount_cad") or tx.get("amount_usd") or 0
@@ -408,6 +438,18 @@ CATEGORIZE ALL {len(transactions)} TRANSACTIONS AND RETURN JSON ARRAY:"""
                 tx["category"] = "transfer"
                 tx["vendor_name"] = "RBC"
                 tx["notes"] = "Bank credit memo / internal adjustment"
+            
+            # ===== TAX REFUNDS (government deposits - NOT income) =====
+            elif amount > 0 and any(kw in desc1 or kw in desc2 for kw in ["gst", "hst", "receiver general", "rec gen", "canada revenue", "cra"]):
+                tx["type"] = "tax_refund"
+                tx["category"] = "tax_refund"
+                tx["vendor_name"] = "CRA / Receiver General"
+                tx["notes"] = "Government tax refund (GST/HST ITC) - NOT revenue"
+            elif amount > 0 and ("fed govt" in desc1 or "fed govt" in desc2):
+                tx["type"] = "tax_refund"
+                tx["category"] = "tax_refund"
+                tx["vendor_name"] = "Federal Government"
+                tx["notes"] = "Government refund/credit - NOT revenue"
             
             # ===== POSITIVE AMOUNTS (income) =====
             elif amount > 0:
@@ -568,6 +610,7 @@ async def parse_bank_csv(request: ParseBankCSVRequest):
         total_income = 0
         total_expenses = 0
         total_transfers = 0
+        total_tax_refunds = 0
         
         for tx in categorized:
             # Use whichever amount column has data (CAD account vs USD account)
@@ -579,6 +622,8 @@ async def parse_bank_csv(request: ParseBankCSVRequest):
                 total_expenses += abs(amount)
             elif tx.get("type") == "transfer":
                 total_transfers += abs(amount)
+            elif tx.get("type") == "tax_refund":
+                total_tax_refunds += abs(amount)
             
             transactions.append(BankTransaction(
                 index=tx["index"],
@@ -605,16 +650,19 @@ async def parse_bank_csv(request: ParseBankCSVRequest):
             "total_income": round(total_income, 2),
             "total_expenses": round(total_expenses, 2),
             "total_transfers": round(total_transfers, 2),
+            "total_tax_refunds": round(total_tax_refunds, 2),
             "expense_count": sum(1 for t in transactions if t.type == "expense"),
             "income_count": sum(1 for t in transactions if t.type == "income"),
             "transfer_count": sum(1 for t in transactions if t.type == "transfer"),
+            "tax_refund_count": sum(1 for t in transactions if t.type == "tax_refund"),
             "account_currency": account_currency,
         }
         
         logger.info(f"Categorized {len(transactions)} transactions: "
                     f"{summary['expense_count']} expenses, "
                     f"{summary['income_count']} income, "
-                    f"{summary['transfer_count']} transfers")
+                    f"{summary['transfer_count']} transfers, "
+                    f"{summary.get('tax_refund_count', 0)} tax refunds")
         
         return ParseBankCSVResponse(transactions=transactions, summary=summary)
         

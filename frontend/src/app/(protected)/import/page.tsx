@@ -1000,6 +1000,8 @@ function BankImportSection() {
                           ? "bg-emerald-500/10 text-emerald-400"
                           : tx.type === "transfer"
                           ? "bg-blue-500/10 text-blue-400"
+                          : tx.type === "tax_refund"
+                          ? "bg-cyan-500/10 text-cyan-400"
                           : "bg-orange-500/10 text-orange-400"
                       )}
                     >
@@ -1009,6 +1011,8 @@ function BankImportSection() {
                         ? "Income"
                         : tx.type === "transfer"
                         ? "Transfer"
+                        : tx.type === "tax_refund"
+                        ? "Tax Refund"
                         : "Owner Draw"}
                     </span>
                   </td>
