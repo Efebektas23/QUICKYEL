@@ -2,7 +2,7 @@
 
 import React, { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   DollarSign,
   Receipt,
@@ -25,10 +25,14 @@ import {
   Users,
   Calendar,
   ChevronDown,
+  ChevronRight,
   Building2,
   CreditCard,
   Landmark,
   ArrowLeftRight,
+  X,
+  Image as ImageIcon,
+  Link as LinkIcon,
 } from "lucide-react";
 import Link from "next/link";
 import { exportApi, expensesApi, revenueApi } from "@/lib/firebase-api";
@@ -77,9 +81,12 @@ const PERIOD_OPTIONS: PeriodOption[] = [
   { id: "q2_2026", label: "Q2 2026 (Apr-Jun)", shortLabel: "Q2 2026", start: "2026-04-01", end: "2026-06-30" },
 ];
 
+type DrillDownType = "cad_revenue" | "usd_revenue" | "cad_expense" | "usd_expense" | null;
+
 export default function DashboardPage() {
   const [selectedPeriod, setSelectedPeriod] = useState<PeriodPreset>("all");
   const [showPeriodMenu, setShowPeriodMenu] = useState(false);
+  const [drillDown, setDrillDown] = useState<DrillDownType>(null);
 
   const currentPeriod = PERIOD_OPTIONS.find((p) => p.id === selectedPeriod) || PERIOD_OPTIONS[0];
 
@@ -148,6 +155,9 @@ export default function DashboardPage() {
         cad_count: cadRevenues.length,
         count: all.revenues.length,
         verified_count: revenues.length,
+        // Individual items for drill-down
+        usd_items: usdRevenues,
+        cad_items: cadRevenues,
       };
     },
   });
@@ -172,7 +182,7 @@ export default function DashboardPage() {
         );
       }
 
-      // Sort by date descending and take first 5
+      // Sort by date descending
       expenses.sort((a, b) => {
         const da = a.transaction_date
           ? new Date(a.transaction_date).getTime()
@@ -183,7 +193,17 @@ export default function DashboardPage() {
         return db - da;
       });
 
-      return { expenses: expenses.slice(0, 5), total: expenses.length };
+      // Currency split for drill-down
+      const cadExpenses = expenses.filter((e: any) => (e.original_currency || "CAD") !== "USD");
+      const usdExpenses = expenses.filter((e: any) => (e.original_currency || "CAD") === "USD");
+
+      return {
+        expenses: expenses.slice(0, 5),
+        total: expenses.length,
+        // For drill-down
+        cad_items: cadExpenses,
+        usd_items: usdExpenses,
+      };
     },
   });
 
@@ -422,7 +442,7 @@ export default function DashboardPage() {
             Currency Breakdown
           </h2>
           <p className="text-xs text-slate-500 mb-4">
-            All amounts are converted to CAD using Bank of Canada daily exchange rates. Totals above reflect the final CAD equivalents.
+            All amounts are converted to CAD using Bank of Canada daily exchange rates. Click any box to see individual entries.
           </p>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {/* Revenue by Currency */}
@@ -430,33 +450,60 @@ export default function DashboardPage() {
               <h3 className="text-sm font-medium text-slate-400 mb-3">Revenue</h3>
               <div className="space-y-3">
                 {(revenueSummary?.cad_count || 0) > 0 && (
-                  <div className="flex items-center justify-between p-3 rounded-xl bg-slate-800/50">
-                    <div className="flex items-center gap-2">
-                      <span className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center text-xs font-bold">CA</span>
-                      <div>
-                        <p className="text-sm font-medium text-white">CAD Revenue</p>
-                        <p className="text-xs text-slate-500">{revenueSummary?.cad_count || 0} entries</p>
-                      </div>
-                    </div>
-                    <p className="text-sm font-bold text-white">{formatCurrency(revenueSummary?.total_original_cad || 0)}</p>
-                  </div>
+                  <CurrencyBox
+                    currencyCode="CA"
+                    currencyColor="emerald"
+                    title="CAD Revenue"
+                    subtitle={`${revenueSummary?.cad_count || 0} entries`}
+                    amount={formatCurrency(revenueSummary?.total_original_cad || 0)}
+                    isExpanded={drillDown === "cad_revenue"}
+                    onClick={() => setDrillDown(drillDown === "cad_revenue" ? null : "cad_revenue")}
+                  />
+                )}
+                {drillDown === "cad_revenue" && (
+                  <CurrencyDrillDown
+                    items={(revenueSummary?.cad_items || []).map((r: any) => ({
+                      id: r.id,
+                      vendor: r.client_name || r.description || "Unknown",
+                      date: r.date,
+                      amount: r.amount_cad || r.amount_original || 0,
+                      originalAmount: r.amount_original || 0,
+                      currency: "CAD",
+                      source: r.entry_type || "manual",
+                      category: r.load_number ? `Load #${r.load_number}` : undefined,
+                      hasReceipt: !!r.document_url,
+                    }))}
+                    onClose={() => setDrillDown(null)}
+                  />
                 )}
                 {(revenueSummary?.usd_count || 0) > 0 && (
-                  <div className="flex items-center justify-between p-3 rounded-xl bg-slate-800/50">
-                    <div className="flex items-center gap-2">
-                      <span className="w-8 h-8 rounded-lg bg-blue-500/10 text-blue-400 flex items-center justify-center text-xs font-bold">US</span>
-                      <div>
-                        <p className="text-sm font-medium text-white">USD Revenue</p>
-                        <p className="text-xs text-slate-500">
-                          {revenueSummary?.usd_count || 0} entries &middot; ${(revenueSummary?.total_usd || 0).toLocaleString("en-CA", { minimumFractionDigits: 2 })} USD
-                        </p>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-sm font-bold text-white">{formatCurrency(revenueSummary?.total_usd_converted_cad || 0)}</p>
-                      <p className="text-xs text-slate-500">converted CAD</p>
-                    </div>
-                  </div>
+                  <CurrencyBox
+                    currencyCode="US"
+                    currencyColor="blue"
+                    title="USD Revenue"
+                    subtitle={`${revenueSummary?.usd_count || 0} entries · $${(revenueSummary?.total_usd || 0).toLocaleString("en-CA", { minimumFractionDigits: 2 })} USD`}
+                    amount={formatCurrency(revenueSummary?.total_usd_converted_cad || 0)}
+                    amountSub="converted CAD"
+                    isExpanded={drillDown === "usd_revenue"}
+                    onClick={() => setDrillDown(drillDown === "usd_revenue" ? null : "usd_revenue")}
+                  />
+                )}
+                {drillDown === "usd_revenue" && (
+                  <CurrencyDrillDown
+                    items={(revenueSummary?.usd_items || []).map((r: any) => ({
+                      id: r.id,
+                      vendor: r.client_name || r.description || "Unknown",
+                      date: r.date,
+                      amount: r.amount_cad || 0,
+                      originalAmount: r.amount_original || 0,
+                      currency: "USD",
+                      exchangeRate: r.exchange_rate,
+                      source: r.entry_type || "manual",
+                      category: r.load_number ? `Load #${r.load_number}` : undefined,
+                      hasReceipt: !!r.document_url,
+                    }))}
+                    onClose={() => setDrillDown(null)}
+                  />
                 )}
                 {(revenueSummary?.verified_count || 0) === 0 && (
                   <p className="text-sm text-slate-500 text-center py-2">No revenue data</p>
@@ -469,35 +516,68 @@ export default function DashboardPage() {
               <h3 className="text-sm font-medium text-slate-400 mb-3">Expenses</h3>
               <div className="space-y-3">
                 {(summary?.by_currency?.cad?.count || 0) > 0 && (
-                  <div className="flex items-center justify-between p-3 rounded-xl bg-slate-800/50">
-                    <div className="flex items-center gap-2">
-                      <span className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center text-xs font-bold">CA</span>
-                      <div>
-                        <p className="text-sm font-medium text-white">CAD Expenses</p>
-                        <p className="text-xs text-slate-500">{summary?.by_currency?.cad?.count || 0} entries</p>
-                      </div>
-                    </div>
-                    <p className="text-sm font-bold text-white">{formatCurrency(summary?.by_currency?.cad?.original_total || 0)}</p>
-                  </div>
+                  <CurrencyBox
+                    currencyCode="CA"
+                    currencyColor="emerald"
+                    title="CAD Expenses"
+                    subtitle={`${summary?.by_currency?.cad?.count || 0} entries`}
+                    amount={formatCurrency(summary?.by_currency?.cad?.original_total || 0)}
+                    isExpanded={drillDown === "cad_expense"}
+                    onClick={() => setDrillDown(drillDown === "cad_expense" ? null : "cad_expense")}
+                  />
+                )}
+                {drillDown === "cad_expense" && (
+                  <CurrencyDrillDown
+                    items={(recentExpenses?.cad_items || []).map((e: any) => ({
+                      id: e.id,
+                      vendor: e.vendor_name || "Unknown",
+                      date: e.transaction_date,
+                      amount: e.cad_amount || 0,
+                      originalAmount: e.original_amount || e.cad_amount || 0,
+                      currency: "CAD",
+                      source: e.entry_type || (e.bank_linked ? "bank_linked" : "manual"),
+                      category: categoryLabels[e.category] || e.category,
+                      hasReceipt: !!e.receipt_image_url,
+                      gst: e.gst_amount,
+                      hst: e.hst_amount,
+                      pst: e.pst_amount,
+                    }))}
+                    onClose={() => setDrillDown(null)}
+                    linkBase="/expenses"
+                  />
                 )}
                 {(summary?.by_currency?.usd?.count || 0) > 0 && (
-                  <div className="flex items-center justify-between p-3 rounded-xl bg-slate-800/50">
-                    <div className="flex items-center gap-2">
-                      <span className="w-8 h-8 rounded-lg bg-blue-500/10 text-blue-400 flex items-center justify-center text-xs font-bold">US</span>
-                      <div>
-                        <p className="text-sm font-medium text-white">USD Expenses</p>
-                        <p className="text-xs text-slate-500">
-                          {summary?.by_currency?.usd?.count || 0} entries &middot; ${(summary?.by_currency?.usd?.original_total || 0).toLocaleString("en-CA", { minimumFractionDigits: 2 })} USD
-                        </p>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-sm font-bold text-white">{formatCurrency(summary?.by_currency?.usd?.converted_cad || 0)}</p>
-                      <p className="text-xs text-slate-500">
-                        avg rate: {(summary?.by_currency?.usd?.avg_rate || 0).toFixed(4)}
-                      </p>
-                    </div>
-                  </div>
+                  <CurrencyBox
+                    currencyCode="US"
+                    currencyColor="blue"
+                    title="USD Expenses"
+                    subtitle={`${summary?.by_currency?.usd?.count || 0} entries · $${(summary?.by_currency?.usd?.original_total || 0).toLocaleString("en-CA", { minimumFractionDigits: 2 })} USD`}
+                    amount={formatCurrency(summary?.by_currency?.usd?.converted_cad || 0)}
+                    amountSub={`avg rate: ${(summary?.by_currency?.usd?.avg_rate || 0).toFixed(4)}`}
+                    isExpanded={drillDown === "usd_expense"}
+                    onClick={() => setDrillDown(drillDown === "usd_expense" ? null : "usd_expense")}
+                  />
+                )}
+                {drillDown === "usd_expense" && (
+                  <CurrencyDrillDown
+                    items={(recentExpenses?.usd_items || []).map((e: any) => ({
+                      id: e.id,
+                      vendor: e.vendor_name || "Unknown",
+                      date: e.transaction_date,
+                      amount: e.cad_amount || 0,
+                      originalAmount: e.original_amount || 0,
+                      currency: "USD",
+                      exchangeRate: e.exchange_rate,
+                      source: e.entry_type || (e.bank_linked ? "bank_linked" : "manual"),
+                      category: categoryLabels[e.category] || e.category,
+                      hasReceipt: !!e.receipt_image_url,
+                      gst: e.gst_amount,
+                      hst: e.hst_amount,
+                      pst: e.pst_amount,
+                    }))}
+                    onClose={() => setDrillDown(null)}
+                    linkBase="/expenses"
+                  />
                 )}
                 {(summary?.totals?.expense_count || 0) === 0 && (
                   <p className="text-sm text-slate-500 text-center py-2">No expense data</p>
@@ -949,5 +1029,264 @@ function EmptyState({ message }: { message: string }) {
         Upload your first receipt
       </Link>
     </div>
+  );
+}
+
+// Currency Breakdown clickable box
+function CurrencyBox({
+  currencyCode,
+  currencyColor,
+  title,
+  subtitle,
+  amount,
+  amountSub,
+  isExpanded,
+  onClick,
+}: {
+  currencyCode: string;
+  currencyColor: "emerald" | "blue";
+  title: string;
+  subtitle: string;
+  amount: string;
+  amountSub?: string;
+  isExpanded: boolean;
+  onClick: () => void;
+}) {
+  const colorClasses = {
+    emerald: "bg-emerald-500/10 text-emerald-400",
+    blue: "bg-blue-500/10 text-blue-400",
+  };
+
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        "w-full flex items-center justify-between p-3 rounded-xl transition-all text-left",
+        isExpanded
+          ? "bg-slate-700/50 ring-1 ring-amber-500/30"
+          : "bg-slate-800/50 hover:bg-slate-800"
+      )}
+    >
+      <div className="flex items-center gap-2">
+        <span
+          className={cn(
+            "w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold",
+            colorClasses[currencyColor]
+          )}
+        >
+          {currencyCode}
+        </span>
+        <div>
+          <p className="text-sm font-medium text-white">{title}</p>
+          <p className="text-xs text-slate-500">{subtitle}</p>
+        </div>
+      </div>
+      <div className="flex items-center gap-2">
+        <div className="text-right">
+          <p className="text-sm font-bold text-white">{amount}</p>
+          {amountSub && <p className="text-xs text-slate-500">{amountSub}</p>}
+        </div>
+        <ChevronRight
+          className={cn(
+            "w-4 h-4 text-slate-500 transition-transform",
+            isExpanded && "rotate-90"
+          )}
+        />
+      </div>
+    </button>
+  );
+}
+
+// Drill-down detail panel
+interface DrillDownItem {
+  id: string;
+  vendor: string;
+  date: string | Date | null;
+  amount: number;
+  originalAmount: number;
+  currency: string;
+  exchangeRate?: number;
+  source: string;
+  category?: string;
+  hasReceipt?: boolean;
+  gst?: number;
+  hst?: number;
+  pst?: number;
+}
+
+function CurrencyDrillDown({
+  items,
+  onClose,
+  linkBase,
+}: {
+  items: DrillDownItem[];
+  onClose: () => void;
+  linkBase?: string;
+}) {
+  const [showAll, setShowAll] = useState(false);
+  const INITIAL_SHOW = 15;
+  const displayItems = showAll ? items : items.slice(0, INITIAL_SHOW);
+
+  const sourceLabel = (s: string) => {
+    switch (s) {
+      case "bank_import": return "Bank CSV";
+      case "ocr": return "Receipt OCR";
+      case "manual": return "Manual";
+      case "bank_linked": return "Bank + Receipt";
+      case "factoring": return "Factoring";
+      default: return s;
+    }
+  };
+
+  const sourceColor = (s: string) => {
+    switch (s) {
+      case "bank_import": return "bg-blue-500/10 text-blue-400";
+      case "ocr": return "bg-amber-500/10 text-amber-400";
+      case "manual": return "bg-slate-500/10 text-slate-400";
+      case "bank_linked": return "bg-emerald-500/10 text-emerald-400";
+      case "factoring": return "bg-purple-500/10 text-purple-400";
+      default: return "bg-slate-500/10 text-slate-400";
+    }
+  };
+
+  // Group by source for summary
+  const sourceSummary = items.reduce((acc: Record<string, { count: number; total: number }>, item) => {
+    const key = item.source;
+    if (!acc[key]) acc[key] = { count: 0, total: 0 };
+    acc[key].count++;
+    acc[key].total += item.amount;
+    return acc;
+  }, {});
+
+  return (
+    <AnimatePresence>
+      <motion.div
+        initial={{ opacity: 0, height: 0 }}
+        animate={{ opacity: 1, height: "auto" }}
+        exit={{ opacity: 0, height: 0 }}
+        className="overflow-hidden"
+      >
+        <div className="rounded-xl bg-slate-800/30 border border-slate-700/50 overflow-hidden">
+          {/* Source summary bar */}
+          <div className="px-4 py-3 bg-slate-800/50 border-b border-slate-700/30">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs text-slate-400 font-medium uppercase tracking-wider">
+                Source Breakdown ({items.length} entries)
+              </p>
+              <button onClick={onClose} className="p-1 hover:bg-slate-700 rounded transition-colors">
+                <X className="w-3.5 h-3.5 text-slate-500" />
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {Object.entries(sourceSummary).map(([src, data]) => (
+                <span
+                  key={src}
+                  className={cn(
+                    "inline-flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs font-medium",
+                    sourceColor(src)
+                  )}
+                >
+                  {sourceLabel(src)}
+                  <span className="opacity-70">({data.count})</span>
+                  <span className="opacity-50">·</span>
+                  <span>{formatCurrency(data.total)}</span>
+                </span>
+              ))}
+            </div>
+          </div>
+
+          {/* Entries list */}
+          <div className="divide-y divide-slate-800/50">
+            {displayItems.map((item, idx) => {
+              const content = (
+                <div
+                  key={item.id || idx}
+                  className={cn(
+                    "px-4 py-3 flex items-center gap-3 transition-colors",
+                    linkBase ? "hover:bg-slate-700/30" : ""
+                  )}
+                >
+                  {/* Source indicator */}
+                  <div className="flex-shrink-0">
+                    {item.hasReceipt ? (
+                      <div className="w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center">
+                        <ImageIcon className="w-4 h-4 text-amber-400" />
+                      </div>
+                    ) : item.source === "bank_linked" ? (
+                      <div className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center">
+                        <LinkIcon className="w-4 h-4 text-emerald-400" />
+                      </div>
+                    ) : (
+                      <div className="w-8 h-8 rounded-lg bg-slate-700/50 flex items-center justify-center">
+                        <FileText className="w-4 h-4 text-slate-500" />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Main info */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-medium text-white truncate">{item.vendor}</p>
+                      <span className={cn("text-[10px] px-1.5 py-0.5 rounded font-medium flex-shrink-0", sourceColor(item.source))}>
+                        {sourceLabel(item.source)}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <span className="text-xs text-slate-500">{formatDate(item.date)}</span>
+                      {item.category && (
+                        <>
+                          <span className="text-xs text-slate-600">·</span>
+                          <span className="text-xs text-slate-500">{item.category}</span>
+                        </>
+                      )}
+                      {(item.gst || item.hst || item.pst) ? (
+                        <>
+                          <span className="text-xs text-slate-600">·</span>
+                          <span className="text-xs text-emerald-500/70">
+                            Tax: {formatCurrency((item.gst || 0) + (item.hst || 0) + (item.pst || 0))}
+                          </span>
+                        </>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  {/* Amount */}
+                  <div className="text-right flex-shrink-0">
+                    <p className="text-sm font-semibold text-white">{formatCurrency(item.amount)}</p>
+                    {item.currency === "USD" && item.exchangeRate && (
+                      <p className="text-[10px] text-slate-500">
+                        ${item.originalAmount.toFixed(2)} USD × {item.exchangeRate.toFixed(4)}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              );
+
+              return linkBase ? (
+                <Link key={item.id || idx} href={`${linkBase}/${item.id}`}>
+                  {content}
+                </Link>
+              ) : (
+                <div key={item.id || idx}>{content}</div>
+              );
+            })}
+          </div>
+
+          {/* Show more / less */}
+          {items.length > INITIAL_SHOW && (
+            <div className="px-4 py-2 border-t border-slate-700/30">
+              <button
+                onClick={() => setShowAll(!showAll)}
+                className="w-full text-center text-xs text-amber-500 hover:text-amber-400 py-1 font-medium"
+              >
+                {showAll
+                  ? "Show less"
+                  : `Show all ${items.length} entries (${items.length - INITIAL_SHOW} more)`}
+              </button>
+            </div>
+          )}
+        </div>
+      </motion.div>
+    </AnimatePresence>
   );
 }
