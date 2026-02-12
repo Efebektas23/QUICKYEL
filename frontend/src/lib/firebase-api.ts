@@ -974,6 +974,7 @@ export interface BankImportSummary {
   expense_count: number;
   income_count: number;
   transfer_count: number;
+  account_currency?: string; // "CAD", "USD", or "MIXED"
 }
 
 export const bankImportApi = {

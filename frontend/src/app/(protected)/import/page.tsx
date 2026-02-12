@@ -414,6 +414,21 @@ function BankImportSection() {
         </motion.div>
       )}
 
+      {/* Account Currency Badge */}
+      {summary?.account_currency && summary.account_currency !== "CAD" && (
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="flex items-center gap-3 px-4 py-3 bg-blue-500/10 border border-blue-500/20 rounded-xl"
+        >
+          <DollarSign className="w-5 h-5 text-blue-400 flex-shrink-0" />
+          <p className="text-sm text-blue-400">
+            <span className="font-bold">{summary.account_currency} Account</span> detected.
+            {" "}All amounts will be converted to CAD using Bank of Canada exchange rates during import.
+          </p>
+        </motion.div>
+      )}
+
       {/* Summary Cards */}
       {summary && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -423,18 +438,18 @@ function BankImportSection() {
             color="slate"
           />
           <MiniStat
-            label="Expenses"
-            value={formatCurrency(summary.total_expenses)}
+            label={`Expenses (${summary.account_currency || "CAD"})`}
+            value={formatCurrency(summary.total_expenses, summary.account_currency || "CAD")}
             color="red"
           />
           <MiniStat
-            label="Income"
-            value={formatCurrency(summary.total_income)}
+            label={`Income (${summary.account_currency || "CAD"})`}
+            value={formatCurrency(summary.total_income, summary.account_currency || "CAD")}
             color="green"
           />
           <MiniStat
-            label="Transfers"
-            value={formatCurrency(summary.total_transfers)}
+            label={`Transfers (${summary.account_currency || "CAD"})`}
+            value={formatCurrency(summary.total_transfers, summary.account_currency || "CAD")}
             color="blue"
           />
         </div>
@@ -511,7 +526,7 @@ function BankImportSection() {
                   Category
                 </th>
                 <th className="p-3 text-right text-xs font-medium text-slate-500">
-                  Amount
+                  Amount ({summary?.account_currency || "CAD"})
                 </th>
               </tr>
             </thead>
@@ -588,16 +603,22 @@ function BankImportSection() {
                     </span>
                   </td>
                   <td className="p-3 text-right">
-                    <span
-                      className={cn(
-                        "text-sm font-bold",
-                        (tx.amount_cad || 0) > 0
-                          ? "text-emerald-400"
-                          : "text-red-400"
-                      )}
-                    >
-                      {formatCurrency(tx.amount_cad || 0)}
-                    </span>
+                    {(() => {
+                      const amt = tx.amount_cad ?? tx.amount_usd ?? 0;
+                      const cur = tx.amount_cad != null && tx.amount_cad !== 0 ? "CAD" : tx.amount_usd != null && tx.amount_usd !== 0 ? "USD" : "CAD";
+                      return (
+                        <span
+                          className={cn(
+                            "text-sm font-bold",
+                            amt > 0
+                              ? "text-emerald-400"
+                              : "text-red-400"
+                          )}
+                        >
+                          {formatCurrency(amt, cur)}
+                        </span>
+                      );
+                    })()}
                   </td>
                 </tr>
               ))}

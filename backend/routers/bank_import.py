@@ -25,31 +25,34 @@ VALID_CATEGORIES = [
 # Gemini prompt for bank transaction categorization
 BANK_CATEGORIZATION_PROMPT = """You are an expert Canadian accountant for a trucking/logistics company (BACKTAS GLOBAL LOGISTICS ULC).
 You need to categorize bank transactions from an RBC business chequing account.
+The account may be either a CAD account or a USD account - check the column amounts.
 
 COMPANY CONTEXT:
 - Trucking/logistics company operating in Canada and USA
-- Uses J D Factors as factoring company for freight invoices
+- Uses J D Factors as factoring company for freight invoices (both CAD and USD accounts)
 - Has ICBC truck/trailer insurance policies
 - Pays employees via Direct Deposits and e-Transfers
 - Common vendors: ICBC (insurance), CAFO Inc (insurance), J D Factors (factoring)
+- Has "TCH CANADA" / "Business PAD" recurring payments (truck lease or equipment payments)
+- Company has two RBC accounts: one CAD (07760-1001270) and one USD (07760-4001350)
 
 TRANSACTION CLASSIFICATION RULES:
 
 1. INCOME (positive amounts) - classify as "income":
-   - "Funds transfer" = Internal transfer from USD account → "income"
-   - "Misc Payment" + "J D FACTORS" = Factoring payment received → "income"
+   - "Misc Payment" + "J D FACTORS" = Factoring payment received → "income" (both CAD and USD accounts)
    - "Credit Memo" = Bank credit → "income"
-   - Any positive amount = incoming money → "income"
+   - "Deposit" = Cash or cheque deposit → "income"
+   - Any other positive amount = incoming money → "income"
 
 2. EXPENSES (negative amounts) - classify with one of these categories:
    - "insurance": ICBC, CAFO Inc, any insurance premium
    - "payroll": "Direct Deposits (PDS)", "PAY EMP-VENDOR", salary/wage payments
-   - "office_admin": "Monthly fee", "Electronic transaction fee", "Bill Payment PAY-FILE FEES", "INTERAC e-Transfer fee", bank charges
+   - "office_admin": "Monthly fee", "Electronic transaction fee", "Bill Payment PAY-FILE FEES", "INTERAC e-Transfer fee", "Service fee", "Items on deposit fee", "In branch cash deposited fee", "Online Banking wire fee", bank charges
    - "factoring_fees": Any J D Factors fees or charges (NOT incoming payments)
    - "other_expenses": "COMMERCIAL TAXES", "EMPTX", tax remittances
+   - "rent_lease": "Business PAD" + "TCH CANADA" = truck/equipment lease payments, also regular lease payments
    - "subcontractor": e-Transfer to known contractors/drivers for services
    - "professional_fees": Payments to accountants, lawyers, consultants
-   - "rent_lease": Lease payments, equipment rental
    - "loan_interest": Loan payments (mark as loan_interest for the interest portion)
    - "fuel": Gas station, fuel purchases
    - "maintenance_repairs": Vehicle repairs, parts
@@ -60,9 +63,14 @@ TRANSACTION CLASSIFICATION RULES:
    - "uncategorized": Cannot determine category
 
 3. TRANSFERS/NON-BUSINESS (should be flagged):
-   - "Online Banking transfer" to savings = "transfer" (not expense)
-   - "e-Transfer sent" to personal recipients (family names) = "owner_draw" (not deductible)
-   - "ATM withdrawal" = "owner_draw" or "other_expenses" depending on context
+   - "Funds transfer" (negative) = Transfer to another account → "transfer" (not expense, not income)
+   - "Funds transfer" (positive) = Transfer received from another account → "transfer" (not income from business)
+   - "Online Banking transfer" = "transfer" (not expense)
+   - "Online Banking wire payment" = Could be an expense or transfer - check context
+   - "e-Transfer sent" to personal recipients (family names like "Yeliz Bektas") = "owner_draw" (not deductible)
+   - "ATM withdrawal" = "owner_draw" (cash taken from business account)
+   - "Cash withdrawal" = "owner_draw" (cash taken from business account)
+   - "Debit Memo" + "OWNERS DRAW" or "OWNER DRAW" = "owner_draw" (not deductible)
 
 4. PAYMENT SOURCE:
    - "bank_checking" for all direct debits, auto-payments, bill payments
@@ -250,20 +258,40 @@ CATEGORIZE ALL {len(transactions)} TRANSACTIONS AND RETURN JSON ARRAY:"""
             desc2 = (tx.get("description2") or "").lower()
             amount = tx.get("amount_cad") or tx.get("amount_usd") or 0
             
-            # Determine type
+            # Determine type based on amount sign and description
             if amount > 0:
-                tx["type"] = "income"
-                tx["category"] = "income"
+                # Positive amounts
                 if "j d factors" in desc2:
+                    tx["type"] = "income"
+                    tx["category"] = "income"
                     tx["vendor_name"] = "J D Factors"
                     tx["notes"] = "Factoring payment received"
                 elif "funds transfer" in desc1:
                     tx["type"] = "transfer"
                     tx["category"] = "transfer"
+                    tx["vendor_name"] = "Internal Transfer"
                     tx["notes"] = "Internal funds transfer"
+                elif "credit memo" in desc1:
+                    tx["type"] = "transfer"
+                    tx["category"] = "transfer"
+                    tx["vendor_name"] = "RBC"
+                    tx["notes"] = "Bank credit memo"
+                elif "deposit" in desc1:
+                    tx["type"] = "income"
+                    tx["category"] = "income"
+                    tx["vendor_name"] = tx["description1"]
+                    tx["notes"] = "Deposit"
+                elif "misc payment" in desc1:
+                    tx["type"] = "income"
+                    tx["category"] = "income"
+                    tx["vendor_name"] = tx.get("description2", "") or tx["description1"]
+                    tx["notes"] = "Payment received"
                 else:
+                    tx["type"] = "income"
+                    tx["category"] = "income"
                     tx["vendor_name"] = tx["description1"]
             else:
+                # Negative amounts
                 tx["type"] = "expense"
                 tx["payment_source"] = "bank_checking"
                 
@@ -283,15 +311,35 @@ CATEGORIZE ALL {len(transactions)} TRANSACTIONS AND RETURN JSON ARRAY:"""
                     tx["category"] = "other_expenses"
                     tx["vendor_name"] = "CRA"
                     tx["notes"] = "Tax remittance"
-                elif "monthly fee" in desc1 or "electronic transaction fee" in desc1:
+                elif "monthly fee" in desc1 or "electronic transaction fee" in desc1 or "service fee" in desc1:
                     tx["category"] = "office_admin"
                     tx["vendor_name"] = "RBC"
                     tx["notes"] = "Bank fee"
-                elif "e-transfer" in desc1:
-                    tx["category"] = "other_expenses"
-                    tx["payment_source"] = "e_transfer"
-                    tx["vendor_name"] = tx.get("description2", "").split(",")[0] if tx.get("description2") else ""
-                    tx["notes"] = "e-Transfer payment"
+                elif "items on deposit fee" in desc1 or "in branch cash deposited fee" in desc1:
+                    tx["category"] = "office_admin"
+                    tx["vendor_name"] = "RBC"
+                    tx["notes"] = "Bank fee"
+                elif "online banking wire fee" in desc1:
+                    tx["category"] = "office_admin"
+                    tx["vendor_name"] = "RBC"
+                    tx["notes"] = "Wire transfer fee"
+                elif "business pad" in desc1 and "tch canada" in desc2:
+                    tx["category"] = "rent_lease"
+                    tx["vendor_name"] = "TCH Canada"
+                    tx["notes"] = "Truck/equipment lease payment"
+                elif "e-transfer sent" in desc1 or "e-transfer" in desc1:
+                    # Check if personal (owner draw) or business
+                    personal_names = ["yeliz", "bektas"]
+                    if any(name in desc2 for name in personal_names):
+                        tx["type"] = "owner_draw"
+                        tx["category"] = "owner_draw"
+                        tx["vendor_name"] = tx.get("description2", "").split(",")[0] if tx.get("description2") else ""
+                        tx["notes"] = "Personal e-Transfer (owner draw)"
+                    else:
+                        tx["category"] = "other_expenses"
+                        tx["payment_source"] = "e_transfer"
+                        tx["vendor_name"] = tx.get("description2", "").split(",")[0] if tx.get("description2") else ""
+                        tx["notes"] = "e-Transfer payment"
                 elif "interac e-transfer fee" in desc1:
                     tx["category"] = "office_admin"
                     tx["vendor_name"] = "RBC"
@@ -304,16 +352,25 @@ CATEGORIZE ALL {len(transactions)} TRANSACTIONS AND RETURN JSON ARRAY:"""
                     tx["category"] = "other_expenses"
                     tx["vendor_name"] = tx.get("description2", "")
                     tx["notes"] = "Government payment"
-                elif "atm withdrawal" in desc1:
+                elif "atm withdrawal" in desc1 or "cash withdrawal" in desc1:
                     tx["type"] = "owner_draw"
                     tx["category"] = "owner_draw"
-                    tx["vendor_name"] = "ATM"
-                    tx["notes"] = "Cash withdrawal"
-                elif "online banking transfer" in desc1:
+                    tx["vendor_name"] = "Cash Withdrawal"
+                    tx["notes"] = "Cash withdrawal from business account"
+                elif "debit memo" in desc1 and ("owner" in desc2 or "draw" in desc2):
+                    tx["type"] = "owner_draw"
+                    tx["category"] = "owner_draw"
+                    tx["vendor_name"] = "Owner Draw"
+                    tx["notes"] = "Owner withdrawal"
+                elif "online banking transfer" in desc1 or "funds transfer" in desc1:
                     tx["type"] = "transfer"
                     tx["category"] = "transfer"
                     tx["vendor_name"] = "Internal Transfer"
-                    tx["notes"] = "Online banking transfer"
+                    tx["notes"] = "Internal funds transfer"
+                elif "online banking wire payment" in desc1:
+                    tx["category"] = "other_expenses"
+                    tx["vendor_name"] = tx.get("description2", "") or "Wire Payment"
+                    tx["notes"] = "Wire payment"
                 else:
                     tx["category"] = "uncategorized"
                     tx["vendor_name"] = tx["description1"]
@@ -368,7 +425,8 @@ async def parse_bank_csv(request: ParseBankCSVRequest):
         total_transfers = 0
         
         for tx in categorized:
-            amount = tx.get("amount_cad") or 0
+            # Use whichever amount column has data (CAD account vs USD account)
+            amount = tx.get("amount_cad") or tx.get("amount_usd") or 0
             
             if tx.get("type") == "income":
                 total_income += abs(amount)
@@ -392,6 +450,11 @@ async def parse_bank_csv(request: ParseBankCSVRequest):
                 confidence=tx.get("confidence", 0.5),
             ))
         
+        # Detect if this is a USD or CAD account based on which column has data
+        has_cad = any(tx.get("amount_cad") is not None and tx.get("amount_cad") != 0 for tx in categorized)
+        has_usd = any(tx.get("amount_usd") is not None and tx.get("amount_usd") != 0 for tx in categorized)
+        account_currency = "USD" if has_usd and not has_cad else "CAD" if has_cad and not has_usd else "MIXED"
+        
         summary = {
             "total_transactions": len(transactions),
             "total_income": round(total_income, 2),
@@ -400,6 +463,7 @@ async def parse_bank_csv(request: ParseBankCSVRequest):
             "expense_count": sum(1 for t in transactions if t.type == "expense"),
             "income_count": sum(1 for t in transactions if t.type == "income"),
             "transfer_count": sum(1 for t in transactions if t.type == "transfer"),
+            "account_currency": account_currency,
         }
         
         logger.info(f"Categorized {len(transactions)} transactions: "
