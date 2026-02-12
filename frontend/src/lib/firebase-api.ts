@@ -54,8 +54,19 @@ export interface Expense {
   processing_status: string;
   error_message: string | null;
   notes: string | null;
-  entry_type?: "ocr" | "manual";  // Track how the expense was entered
+  entry_type?: "ocr" | "manual" | "bank_import";  // Track how the expense was entered
   proof_image_url?: string | null;  // Bank screenshot or other proof for manual entries
+  // Bank import linking
+  bank_linked?: boolean;
+  bank_import_date?: Date;
+  bank_description?: string;
+  bank_statement_date?: string;
+  bank_match_score?: number;
+  bank_match_reason?: string;
+  import_fingerprint?: string;
+  // Receipt linking (when receipt uploaded after bank import)
+  receipt_linked?: boolean;
+  receipt_linked_date?: Date;
   created_at: Date;
   updated_at: Date;
 }
@@ -339,7 +350,111 @@ export const expensesApi = {
       const result = await response.json();
       console.log("✅ Backend processing complete:", result);
       
-      // 4. Update expense with parsed data
+      // 4. Check for matching bank_import expense (reverse matching)
+      // If the user already imported a bank CSV, find the matching transaction
+      const receiptAmount = result.cad_amount || result.total_amount || 0;
+      const receiptDate = result.transaction_date ? new Date(result.transaction_date) : null;
+      const receiptVendor = (result.vendor_name || "").toLowerCase();
+      
+      if (receiptAmount > 0 && receiptDate) {
+        console.log("🔍 Checking for matching bank import expense...");
+        try {
+          const bankExpQ = query(
+            collection(db, EXPENSES_COLLECTION),
+            where("entry_type", "==", "bank_import")
+          );
+          const bankExpSnap = await getDocs(bankExpQ);
+          
+          let bestMatchId = "";
+          let bestMatchData: Record<string, any> = {};
+          let bestMatchScore = 0;
+          
+          for (const docSnap of bankExpSnap.docs) {
+            const data = docSnap.data();
+            // Skip already receipt-linked records
+            if (data.receipt_linked || data.receipt_image_url) continue;
+            
+            const bankAmount = data.cad_amount || 0;
+            const bankDate = data.transaction_date
+              ? (typeof data.transaction_date === "string"
+                ? new Date(data.transaction_date)
+                : data.transaction_date.toDate?.() || new Date(data.transaction_date))
+              : null;
+            const bankVendor = (data.vendor_name || "").toLowerCase();
+            
+            // Amount check
+            const amountDiff = Math.abs(receiptAmount - bankAmount);
+            const amountPct = receiptAmount > 0 ? (amountDiff / receiptAmount) * 100 : 100;
+            if (amountDiff >= 1.0 && amountPct >= 2) continue;
+            
+            // Date check
+            if (!bankDate) continue;
+            const daysDiff = Math.abs((receiptDate.getTime() - bankDate.getTime()) / (1000 * 60 * 60 * 24));
+            if (daysDiff > 7) continue;
+            
+            // Score
+            let score = 0;
+            if (amountDiff < 0.02) score += 50;
+            else if (amountDiff < 1.0) score += 40;
+            else score += 25;
+            
+            if (daysDiff < 1) score += 30;
+            else if (daysDiff <= 3) score += 20;
+            else score += 10;
+            
+            // Vendor match
+            if (receiptVendor && bankVendor) {
+              const rWords = receiptVendor.split(/[\s,.\-\/]+/).filter((w: string) => w.length > 2);
+              const bWords = bankVendor.split(/[\s,.\-\/]+/).filter((w: string) => w.length > 2);
+              if (receiptVendor === bankVendor) score += 20;
+              else if (rWords.some((rw: string) => bWords.some((bw: string) => bw.includes(rw) || rw.includes(bw)))) score += 10;
+            }
+            
+            if (score >= 60 && score > bestMatchScore) {
+              bestMatchId = docSnap.id;
+              bestMatchData = data;
+              bestMatchScore = score;
+            }
+          }
+          
+          if (bestMatchId) {
+            console.log(`✅ Found matching bank expense (score: ${bestMatchScore}), linking receipt to it`);
+            
+            // Update the existing bank_import expense with receipt data
+            await expensesApi.update(bestMatchId, {
+              // Receipt visual archive
+              receipt_image_url: imageUrls[0],
+              receipt_image_urls: imageUrls,
+              raw_ocr_text: result.raw_text,
+              // Tax info from receipt (the real values from the actual receipt)
+              tax_amount: result.tax_amount || 0,
+              gst_amount: result.gst_amount || 0,
+              hst_amount: result.hst_amount || 0,
+              pst_amount: result.pst_amount || 0,
+              // Update vendor/category if receipt has better info
+              vendor_name: result.vendor_name || bestMatchData.vendor_name,
+              category: result.category !== "uncategorized" ? result.category : bestMatchData.category,
+              jurisdiction: result.jurisdiction !== "unknown" ? result.jurisdiction : bestMatchData.jurisdiction,
+              card_last_4: result.card_last_4 || bestMatchData.card_last_4,
+              // Link flags
+              receipt_linked: true,
+              receipt_linked_date: new Date(),
+              is_verified: false, // Needs user review
+              processing_status: "completed",
+            });
+            
+            // Delete the placeholder expense we created at step 2
+            await deleteDoc(doc(db, EXPENSES_COLLECTION, expenseId));
+            console.log(`🗑️ Deleted placeholder expense ${expenseId}, using bank record ${bestMatchId}`);
+            
+            return (await expensesApi.get(bestMatchId))!;
+          }
+        } catch (matchErr) {
+          console.warn("Bank matching check failed, continuing with new expense:", matchErr);
+        }
+      }
+      
+      // 5. No bank match found - update the new expense with parsed data
       await expensesApi.update(expenseId, {
         vendor_name: result.vendor_name,
         transaction_date: result.transaction_date || null,
@@ -356,6 +471,7 @@ export const expensesApi = {
         card_last_4: result.card_last_4,
         raw_ocr_text: result.raw_text,
         processing_status: "completed",
+        entry_type: "ocr",
       });
       
       return (await expensesApi.get(expenseId))!;

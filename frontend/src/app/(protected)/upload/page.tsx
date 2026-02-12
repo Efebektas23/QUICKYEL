@@ -392,6 +392,24 @@ export default function UploadPage() {
                     <span className="font-medium">Receipt processed!</span>
                   </div>
 
+                  {/* Bank Match Found Banner */}
+                  {processedExpense.receipt_linked && (
+                    <div className="p-3 rounded-xl bg-blue-500/10 border border-blue-500/20 text-left max-w-sm mx-auto">
+                      <div className="flex items-start gap-2">
+                        <svg className="w-5 h-5 text-blue-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                        </svg>
+                        <div>
+                          <p className="text-blue-300 text-sm font-medium">Linked to bank transaction</p>
+                          <p className="text-blue-400/70 text-xs mt-0.5">
+                            This receipt matched an existing bank import record. 
+                            Receipt image and tax details (GST/HST/PST) have been added to the bank record.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   {/* Quick Preview */}
                   <div className="p-4 rounded-xl bg-slate-800/50 text-left max-w-sm mx-auto">
                     <div className="space-y-2">
@@ -414,6 +432,38 @@ export default function UploadPage() {
                             processedExpense.category}
                         </span>
                       </div>
+                      {/* Tax breakdown from receipt */}
+                      {(processedExpense.gst_amount > 0 || processedExpense.hst_amount > 0 || processedExpense.pst_amount > 0) && (
+                        <>
+                          <div className="border-t border-slate-700 pt-2">
+                            <span className="text-slate-500 text-xs uppercase tracking-wider">Tax Details</span>
+                          </div>
+                          {processedExpense.gst_amount > 0 && (
+                            <div className="flex justify-between">
+                              <span className="text-slate-400 text-sm">GST (5%)</span>
+                              <span className="text-emerald-400 text-sm font-medium">
+                                {formatCurrency(processedExpense.gst_amount)}
+                              </span>
+                            </div>
+                          )}
+                          {processedExpense.hst_amount > 0 && (
+                            <div className="flex justify-between">
+                              <span className="text-slate-400 text-sm">HST</span>
+                              <span className="text-emerald-400 text-sm font-medium">
+                                {formatCurrency(processedExpense.hst_amount)}
+                              </span>
+                            </div>
+                          )}
+                          {processedExpense.pst_amount > 0 && (
+                            <div className="flex justify-between">
+                              <span className="text-slate-400 text-sm">PST/QST</span>
+                              <span className="text-orange-400 text-sm font-medium">
+                                {formatCurrency(processedExpense.pst_amount)}
+                              </span>
+                            </div>
+                          )}
+                        </>
+                      )}
                     </div>
                   </div>
 
