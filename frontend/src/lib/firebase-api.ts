@@ -1094,9 +1094,9 @@ export const bankImportApi = {
           await deleteDoc(fpDocRef);
         }
         // Remove bad fingerprints from the existing set so they get re-imported
-        for (const badFp of badFingerprints) {
+        badFingerprints.forEach((badFp) => {
           existingFingerprints.delete(badFp);
-        }
+        });
         replaced = docsToDelete.length;
       }
     }
@@ -1215,7 +1215,7 @@ export const bankImportApi = {
       await duplicateCheckApi.registerTransactionFingerprints(newFingerprints, "bank_import");
     }
 
-    return { expenses_created, revenues_created, skipped, duplicates_skipped };
+    return { expenses_created, revenues_created, skipped, duplicates_skipped, replaced };
   },
 };
 
@@ -1406,7 +1406,7 @@ export const factoringApi = {
       await duplicateCheckApi.registerTransactionFingerprints(newFingerprints, "factoring_import");
     }
 
-    return { expenses_created, skipped, duplicates_skipped };
+    return { expenses_created, skipped, duplicates_skipped, replaced };
   },
 };
 
