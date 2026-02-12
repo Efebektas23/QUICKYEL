@@ -228,7 +228,7 @@ function BankImportSection() {
     setTransactions((prev) => prev.map((tx) => ({ ...tx, selected: false })));
   };
 
-  const handleImport = async () => {
+  const handleImport = async (forceReimport = false) => {
     const selected = transactions.filter((tx) => tx.selected);
     if (selected.length === 0) {
       toast.error("Please select at least one transaction to import");
@@ -236,12 +236,15 @@ function BankImportSection() {
     }
 
     setIsProcessing(true);
-    toast.loading(`Importing ${selected.length} transactions...`, {
-      id: "bank-import",
-    });
+    toast.loading(
+      forceReimport
+        ? `Force re-importing ${selected.length} transactions...`
+        : `Importing ${selected.length} transactions...`,
+      { id: "bank-import" }
+    );
 
     try {
-      const result = await bankImportApi.importTransactions(selected);
+      const result = await bankImportApi.importTransactions(selected, forceReimport);
       setImportResult(result);
       setStep("done");
 
@@ -386,9 +389,28 @@ function BankImportSection() {
             </div>
           )}
         </div>
-        <button onClick={reset} className="btn-primary">
-          Import Another Statement
-        </button>
+        <div className="flex flex-col items-center gap-3">
+          <button onClick={reset} className="btn-primary">
+            Import Another Statement
+          </button>
+          {importResult?.duplicates_skipped > 0 && importResult?.expenses_created === 0 && importResult?.revenues_created === 0 && (
+            <div className="mt-4 p-4 bg-amber-500/10 border border-amber-500/30 rounded-xl max-w-md">
+              <p className="text-sm text-amber-300 mb-3">
+                All transactions were skipped as duplicates. If the previous import had errors (e.g. wrong currency amounts), you can force re-import to replace them.
+              </p>
+              <button
+                onClick={() => {
+                  setStep("review");
+                  setImportResult(null);
+                }}
+                className="w-full px-4 py-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-400 font-semibold rounded-lg border border-amber-500/40 transition-all flex items-center justify-center gap-2"
+              >
+                <ArrowUpDown className="w-4 h-4" />
+                Go Back &amp; Force Re-import
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     );
   }
@@ -496,7 +518,7 @@ function BankImportSection() {
             Back
           </button>
           <button
-            onClick={handleImport}
+            onClick={() => handleImport(false)}
             disabled={isProcessing || selectedCount === 0}
             className="btn-primary text-sm"
           >
@@ -512,6 +534,17 @@ function BankImportSection() {
               </>
             )}
           </button>
+          {duplicateWarning && (
+            <button
+              onClick={() => handleImport(true)}
+              disabled={isProcessing || selectedCount === 0}
+              className="text-sm px-3 py-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-400 font-semibold rounded-lg border border-amber-500/40 transition-all flex items-center gap-1.5"
+              title="Delete existing records and re-import with corrected data"
+            >
+              <ArrowUpDown className="w-4 h-4" />
+              Force Re-import
+            </button>
+          )}
         </div>
       </div>
 
@@ -729,7 +762,7 @@ function FactoringImportSection() {
     );
   };
 
-  const handleImport = async () => {
+  const handleImport = async (forceReimport = false) => {
     const selected = entries.filter((e) => e.selected);
     if (selected.length === 0) {
       toast.error("Please select at least one entry to import");
@@ -737,9 +770,12 @@ function FactoringImportSection() {
     }
 
     setIsProcessing(true);
-    toast.loading(`Importing ${selected.length} entries...`, {
-      id: "factoring-import",
-    });
+    toast.loading(
+      forceReimport
+        ? `Force re-importing ${selected.length} entries...`
+        : `Importing ${selected.length} entries...`,
+      { id: "factoring-import" }
+    );
 
     try {
       // For USD reports, fetch the actual Bank of Canada exchange rate
@@ -768,7 +804,8 @@ function FactoringImportSection() {
       const result = await factoringApi.importEntries(
         selected,
         reportData?.currency || "CAD",
-        exchangeRate
+        exchangeRate,
+        forceReimport
       );
 
       setImportResult(result);
@@ -924,9 +961,28 @@ function FactoringImportSection() {
             </div>
           )}
         </div>
-        <button onClick={reset} className="btn-primary">
-          Import Another Report
-        </button>
+        <div className="flex flex-col items-center gap-3">
+          <button onClick={reset} className="btn-primary">
+            Import Another Report
+          </button>
+          {importResult?.duplicates_skipped > 0 && importResult?.expenses_created === 0 && (
+            <div className="mt-4 p-4 bg-amber-500/10 border border-amber-500/30 rounded-xl max-w-md">
+              <p className="text-sm text-amber-300 mb-3">
+                All entries were skipped as duplicates. If the previous import had errors, you can force re-import to replace them.
+              </p>
+              <button
+                onClick={() => {
+                  setStep("review");
+                  setImportResult(null);
+                }}
+                className="w-full px-4 py-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-400 font-semibold rounded-lg border border-amber-500/40 transition-all flex items-center justify-center gap-2"
+              >
+                <ArrowUpDown className="w-4 h-4" />
+                Go Back &amp; Force Re-import
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     );
   }
@@ -1008,7 +1064,7 @@ function FactoringImportSection() {
             Back
           </button>
           <button
-            onClick={handleImport}
+            onClick={() => handleImport(false)}
             disabled={isProcessing || selectedCount === 0}
             className="btn-primary text-sm"
           >
@@ -1024,6 +1080,17 @@ function FactoringImportSection() {
               </>
             )}
           </button>
+          {duplicateWarning && (
+            <button
+              onClick={() => handleImport(true)}
+              disabled={isProcessing || selectedCount === 0}
+              className="text-sm px-3 py-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-400 font-semibold rounded-lg border border-amber-500/40 transition-all flex items-center gap-1.5"
+              title="Delete existing records and re-import with corrected data"
+            >
+              <ArrowUpDown className="w-4 h-4" />
+              Force Re-import
+            </button>
+          )}
         </div>
       </div>
 
