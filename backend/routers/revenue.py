@@ -6,8 +6,6 @@ from typing import Optional
 import logging
 import httpx
 import json
-import tempfile
-import os
 import google.generativeai as genai
 
 from config import settings
@@ -183,34 +181,26 @@ EXTRACT AND RETURN JSON:"""
             return self._empty_result()
         
         try:
-            # Save PDF to temp file for Gemini upload
-            with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp_file:
-                tmp_file.write(pdf_content)
-                tmp_path = tmp_file.name
+            # Create PDF part for Gemini (inline data, same approach as images)
+            pdf_part = {
+                "mime_type": "application/pdf",
+                "data": pdf_content
+            }
             
-            try:
-                # Upload PDF to Gemini File API
-                logger.info(f"Uploading PDF to Gemini File API ({len(pdf_content)} bytes)...")
-                uploaded_file = genai.upload_file(tmp_path, mime_type="application/pdf")
-                logger.info(f"PDF uploaded successfully: {uploaded_file.name}")
-                
-                # Create prompt for PDF parsing
-                prompt = f"""Look at this Rate Confirmation / Load Confirmation PDF document carefully.
+            logger.info(f"Sending PDF to Gemini inline ({len(pdf_content)} bytes)...")
+            
+            # Create prompt for PDF parsing
+            prompt = f"""Look at this Rate Confirmation / Load Confirmation PDF document carefully.
 
 {RATE_CONFIRMATION_PROMPT}"""
 
-                # Send to Gemini with the PDF
-                response = self.model.generate_content([prompt, uploaded_file])
-                
-                content = response.text.strip()
-                logger.info(f"Gemini response for Rate Confirmation (PDF): {content[:500]}...")
-                
-                return self._parse_gemini_response(content)
-                
-            finally:
-                # Clean up temp file
-                if os.path.exists(tmp_path):
-                    os.unlink(tmp_path)
+            # Send to Gemini with the PDF
+            response = self.model.generate_content([prompt, pdf_part])
+            
+            content = response.text.strip()
+            logger.info(f"Gemini response for Rate Confirmation (PDF): {content[:500]}...")
+            
+            return self._parse_gemini_response(content)
             
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse Gemini PDF response as JSON: {e}")
