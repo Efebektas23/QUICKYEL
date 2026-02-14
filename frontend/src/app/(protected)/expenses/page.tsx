@@ -20,7 +20,7 @@ import {
   ExternalLink,
   Trash2,
   Calendar,
-  CreditCard,
+  Landmark,
 } from "lucide-react";
 import Link from "next/link";
 import { expensesApi, cardsApi } from "@/lib/firebase-api";
@@ -63,7 +63,7 @@ export default function ExpensesPage() {
     category?: string;
     verified_only?: boolean;
     quarter?: string;
-    card_last_4?: string;
+    account?: string; // "checking" for bank checking, or card last_four for specific card
   }>({});
   const [selectedExpense, setSelectedExpense] = useState<any>(null);
   const [showFilters, setShowFilters] = useState(false);
@@ -112,16 +112,30 @@ export default function ExpensesPage() {
       }
     }
 
-    // Card filter
-    if (filter.card_last_4) {
-      expenses = expenses.filter((e: any) => e.card_last_4 === filter.card_last_4);
+    // Account filter (checking account or specific card)
+    if (filter.account) {
+      if (filter.account === "checking") {
+        // Show only bank checking / bank import expenses
+        expenses = expenses.filter((e: any) => 
+          e.payment_source === "bank_checking" || e.entry_type === "bank_import"
+        );
+      } else {
+        // Filter by card last 4 digits
+        expenses = expenses.filter((e: any) => e.card_last_4 === filter.account);
+      }
     }
 
-    // Sort by transaction date descending
+    // Sort by transaction date descending (newest first)
     expenses.sort((a: any, b: any) => {
-      const da = a.transaction_date ? new Date(a.transaction_date).getTime() : 0;
-      const db = b.transaction_date ? new Date(b.transaction_date).getTime() : 0;
-      return db - da;
+      const dateA = a.transaction_date ? new Date(a.transaction_date) : new Date(0);
+      const dateB = b.transaction_date ? new Date(b.transaction_date) : new Date(0);
+      // Primary: transaction_date descending
+      const diff = dateB.getTime() - dateA.getTime();
+      if (diff !== 0) return diff;
+      // Secondary: created_at descending (for same-day entries)
+      const createdA = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const createdB = b.created_at ? new Date(b.created_at).getTime() : 0;
+      return createdB - createdA;
     });
 
     return { expenses, total: expenses.length };
@@ -244,20 +258,23 @@ export default function ExpensesPage() {
                 </select>
               </div>
 
-              {/* Credit Card Filter */}
+              {/* Account Filter */}
               <div>
                 <label className="text-sm text-slate-400 mb-1 block">
-                  <CreditCard className="w-3.5 h-3.5 inline mr-1" />
-                  Credit Card
+                  <Landmark className="w-3.5 h-3.5 inline mr-1" />
+                  Account
                 </label>
                 <select
-                  value={filter.card_last_4 || ""}
+                  value={filter.account || ""}
                   onChange={(e) =>
-                    updateFilter({ ...filter, card_last_4: e.target.value || undefined })
+                    updateFilter({ ...filter, account: e.target.value || undefined })
                   }
-                  className="input-field min-w-[220px]"
+                  className="input-field min-w-[250px]"
                 >
-                  <option value="">All Cards</option>
+                  <option value="">All Accounts</option>
+                  <optgroup label="Bank Accounts">
+                    <option value="checking">RBC Checking</option>
+                  </optgroup>
                   {cards && cards.length > 0 && (() => {
                     const cadCards = cards.filter((c: any) => c.currency === "CAD");
                     const usdCards = cards.filter((c: any) => c.currency === "USD");
@@ -268,7 +285,7 @@ export default function ExpensesPage() {
                           <optgroup label="CAD Cards">
                             {cadCards.map((card: any) => (
                               <option key={card.id} value={card.last_four}>
-                                {card.card_name} (•••• {card.last_four}) {card.is_company_card ? "- Company" : "- Personal"}
+                                {card.card_name} (•••• {card.last_four})
                               </option>
                             ))}
                           </optgroup>
@@ -277,16 +294,16 @@ export default function ExpensesPage() {
                           <optgroup label="USD Cards">
                             {usdCards.map((card: any) => (
                               <option key={card.id} value={card.last_four}>
-                                {card.card_name} (•••• {card.last_four}) {card.is_company_card ? "- Company" : "- Personal"}
+                                {card.card_name} (•••• {card.last_four})
                               </option>
                             ))}
                           </optgroup>
                         )}
                         {otherCards.length > 0 && (
-                          <optgroup label="Cards (No Currency Set)">
+                          <optgroup label="Other Cards">
                             {otherCards.map((card: any) => (
                               <option key={card.id} value={card.last_four}>
-                                {card.card_name} (•••• {card.last_four}) {card.is_company_card ? "- Company" : "- Personal"}
+                                {card.card_name} (•••• {card.last_four})
                               </option>
                             ))}
                           </optgroup>
