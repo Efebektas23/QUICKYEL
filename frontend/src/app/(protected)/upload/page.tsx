@@ -19,6 +19,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import toast from "react-hot-toast";
+import { useQueryClient } from "@tanstack/react-query";
 import { expensesApi } from "@/lib/firebase-api";
 import { formatCurrency, cn } from "@/lib/utils";
 import { categoryLabels } from "@/lib/store";
@@ -34,6 +35,7 @@ interface SelectedFile {
 
 export default function UploadPage() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [uploadState, setUploadState] = useState<UploadState>("idle");
   const [progress, setProgress] = useState(0);
   const [selectedFiles, setSelectedFiles] = useState<SelectedFile[]>([]);
@@ -121,6 +123,9 @@ export default function UploadPage() {
 
   const handleReviewComplete = () => {
     setShowReviewModal(false);
+    // Invalidate all expenses caches so the list shows the new expense immediately
+    queryClient.invalidateQueries({ queryKey: ["expenses"] });
+    queryClient.invalidateQueries({ queryKey: ["summary"] });
     toast.success("Expense saved successfully!");
     router.push("/expenses");
   };

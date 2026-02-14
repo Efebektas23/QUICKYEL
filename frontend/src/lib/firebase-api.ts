@@ -375,13 +375,15 @@ export const expensesApi = {
       console.log("✅ Backend processing complete:", result);
       
       // 3.5 Check for duplicate receipt (different photo of same receipt)
-      // Compares vendor + amount + date against existing receipt-based expenses
+      // Uses a scoring system: amount + date is already strong evidence,
+      // vendor match is a bonus. This catches camera re-takes of same receipt.
       const parsedAmount = result.cad_amount || result.total_amount || 0;
       const parsedDateStr = result.transaction_date || "";
       const parsedVendor = (result.vendor_name || "").toLowerCase().trim();
       
-      if (parsedAmount > 0 && parsedDateStr && parsedVendor) {
+      if (parsedAmount > 0) {
         console.log("🔍 Checking for duplicate receipt data...");
+        console.log(`   Parsed: vendor="${parsedVendor}" amount=${parsedAmount} date="${parsedDateStr}"`);
         try {
           const allExpSnap = await getDocs(collection(db, EXPENSES_COLLECTION));
           
@@ -393,33 +395,68 @@ export const expensesApi = {
             if (!data.receipt_image_url) continue;
             
             const existingAmount = data.cad_amount || 0;
-            const existingDate = data.transaction_date
-              ? (typeof data.transaction_date === "string"
-                ? data.transaction_date
+            const existingDateRaw = data.transaction_date;
+            const existingDate = existingDateRaw
+              ? (typeof existingDateRaw === "string"
+                ? existingDateRaw.substring(0, 10) // Take YYYY-MM-DD part
                 : "")
               : "";
             const existingVendor = (data.vendor_name || "").toLowerCase().trim();
             
-            // Check: amount within $1 tolerance
-            const amountMatch = Math.abs(parsedAmount - existingAmount) < 1.0;
-            // Check: same date
-            const dateMatch = existingDate && parsedDateStr && existingDate === parsedDateStr;
-            // Check: similar vendor name
-            let vendorMatch = false;
-            if (parsedVendor && existingVendor) {
-              if (parsedVendor === existingVendor) {
-                vendorMatch = true;
-              } else {
-                const rWords = parsedVendor.split(/[\s,.\-\/]+/).filter((w: string) => w.length > 2);
-                const eWords = existingVendor.split(/[\s,.\-\/]+/).filter((w: string) => w.length > 2);
-                vendorMatch = rWords.some((rw: string) =>
-                  eWords.some((ew: string) => ew.includes(rw) || rw.includes(ew))
-                );
+            // Score-based duplicate detection
+            let score = 0;
+            const reasons: string[] = [];
+            
+            // Amount check: very close amount is strong evidence
+            const amountDiff = Math.abs(parsedAmount - existingAmount);
+            if (amountDiff < 0.05) {
+              score += 50; // Exact match
+              reasons.push("exact amount");
+            } else if (amountDiff < 1.0) {
+              score += 40; // Within $1
+              reasons.push(`amount ±$${amountDiff.toFixed(2)}`);
+            } else {
+              continue; // Amount too different, skip
+            }
+            
+            // Date check: same date is strong evidence
+            const parsedDateNorm = parsedDateStr.substring(0, 10); // YYYY-MM-DD
+            if (existingDate && parsedDateNorm && existingDate === parsedDateNorm) {
+              score += 40; // Same date
+              reasons.push("same date");
+            } else if (existingDate && parsedDateNorm) {
+              // Check within 1 day (posting date vs transaction date)
+              const d1 = new Date(existingDate);
+              const d2 = new Date(parsedDateNorm);
+              const daysDiff = Math.abs((d1.getTime() - d2.getTime()) / (1000 * 60 * 60 * 24));
+              if (daysDiff <= 1) {
+                score += 25;
+                reasons.push("date ±1 day");
               }
             }
             
-            if (amountMatch && dateMatch && vendorMatch) {
-              console.log(`⚠️ Duplicate receipt detected! Matches expense ${existingDoc.id}: ${data.vendor_name} $${existingAmount}`);
+            // Vendor check: bonus points
+            if (parsedVendor && existingVendor) {
+              if (parsedVendor === existingVendor) {
+                score += 20;
+                reasons.push("exact vendor");
+              } else {
+                const rWords = parsedVendor.split(/[\s,.\-\/]+/).filter((w: string) => w.length > 2);
+                const eWords = existingVendor.split(/[\s,.\-\/]+/).filter((w: string) => w.length > 2);
+                const hasCommon = rWords.some((rw: string) =>
+                  eWords.some((ew: string) => ew.includes(rw) || rw.includes(ew))
+                );
+                if (hasCommon) {
+                  score += 10;
+                  reasons.push("vendor partial match");
+                }
+              }
+            }
+            
+            // Threshold: score >= 70 means high confidence duplicate
+            // (exact amount + same date = 90, exact amount + date±1 = 75)
+            if (score >= 70) {
+              console.log(`⚠️ Duplicate receipt detected (score: ${score})! Matches expense ${existingDoc.id}: ${data.vendor_name} $${existingAmount} [${reasons.join(", ")}]`);
               
               // Clean up: delete uploaded images and placeholder expense
               for (const url of imageUrls) {

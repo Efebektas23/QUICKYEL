@@ -73,6 +73,7 @@ export default function ExpensesPage() {
   const { data: allData, isLoading, refetch } = useQuery({
     queryKey: ["expenses", "all"],
     queryFn: () => expensesApi.list({ per_page: 1000 }),
+    refetchOnMount: "always", // Always refetch when navigating to this page
   });
 
   // Fetch cards for card-based filtering
