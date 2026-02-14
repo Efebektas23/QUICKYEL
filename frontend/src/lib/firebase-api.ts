@@ -76,6 +76,7 @@ export interface Card {
   last_four: string;
   card_name: string;
   is_company_card: boolean;
+  currency?: "CAD" | "USD";
   created_at: Date;
 }
 

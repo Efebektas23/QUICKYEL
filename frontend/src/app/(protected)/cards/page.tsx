@@ -26,6 +26,7 @@ const cardSchema = z.object({
     .regex(/^\d+$/, "Must be numbers only"),
   card_name: z.string().min(2, "Name is required"),
   is_company_card: z.boolean(),
+  currency: z.enum(["CAD", "USD"]),
 });
 
 type CardForm = z.infer<typeof cardSchema>;
@@ -132,8 +133,17 @@ export default function CardsPage() {
                         )}
                       </span>
                     </div>
-                    <p className="text-slate-500 text-sm">
-                      •••• •••• •••• {card.last_four}
+                    <p className="text-slate-500 text-sm flex items-center gap-2">
+                      <span>•••• •••• •••• {card.last_four}</span>
+                      {card.currency && (
+                        <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${
+                          card.currency === "USD" 
+                            ? "bg-blue-500/10 text-blue-400" 
+                            : "bg-emerald-500/10 text-emerald-400"
+                        }`}>
+                          {card.currency}
+                        </span>
+                      )}
                     </p>
                   </div>
                 </div>
@@ -203,6 +213,7 @@ function AddCardModal({
     resolver: zodResolver(cardSchema),
     defaultValues: {
       is_company_card: true,
+      currency: "CAD",
     },
   });
 
@@ -336,6 +347,40 @@ function AddCardModal({
                     <p className="text-xs text-slate-400">
                       Tagged as "Due to Shareholder"
                     </p>
+                  </div>
+                </label>
+              </div>
+            </div>
+
+            {/* Currency */}
+            <div>
+              <label className="block text-sm font-medium text-slate-300 mb-3">
+                Card Currency
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="relative">
+                  <input
+                    type="radio"
+                    value="CAD"
+                    {...register("currency")}
+                    className="peer sr-only"
+                    defaultChecked
+                  />
+                  <div className="p-3 rounded-xl border-2 border-slate-700 peer-checked:border-emerald-500 peer-checked:bg-emerald-500/10 cursor-pointer transition-all text-center">
+                    <span className="font-medium text-white">CAD</span>
+                    <p className="text-xs text-slate-400 mt-0.5">Canadian Dollar</p>
+                  </div>
+                </label>
+                <label className="relative">
+                  <input
+                    type="radio"
+                    value="USD"
+                    {...register("currency")}
+                    className="peer sr-only"
+                  />
+                  <div className="p-3 rounded-xl border-2 border-slate-700 peer-checked:border-blue-500 peer-checked:bg-blue-500/10 cursor-pointer transition-all text-center">
+                    <span className="font-medium text-white">USD</span>
+                    <p className="text-xs text-slate-400 mt-0.5">US Dollar</p>
                   </div>
                 </label>
               </div>

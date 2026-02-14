@@ -7,7 +7,6 @@ import {
   DollarSign,
   Receipt,
   TrendingUp,
-  ArrowUpRight,
   Fuel,
   Wrench,
   UtensilsCrossed,
@@ -216,7 +215,6 @@ export default function DashboardPage() {
   const bankChecking = summary?.by_payment_source?.bank_checking || 0;
   const eTransfer = summary?.by_payment_source?.e_transfer || 0;
   const companyCard = summary?.by_payment_source?.company_expenses || 0;
-  const personalCard = summary?.by_payment_source?.due_to_shareholder || 0;
 
   return (
     <div className="space-y-8">
@@ -589,7 +587,7 @@ export default function DashboardPage() {
       )}
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
           title="Total Expenses"
           value={formatCurrency(summary?.totals?.total_cad)}
@@ -628,16 +626,6 @@ export default function DashboardPage() {
           loading={summaryLoading}
           tooltip="This amount will be deducted from your tax base. Meal expenses are calculated at 50%, uncategorized ones at 0%."
         />
-        <StatCard
-          title="Due to Shareholder"
-          value={formatCurrency(
-            summary?.by_payment_source?.due_to_shareholder
-          )}
-          subtitle="Personal card expenses"
-          icon={<ArrowUpRight className="w-5 h-5" />}
-          color="purple"
-          loading={summaryLoading}
-        />
       </div>
 
       {/* Payment Source Breakdown */}
@@ -650,20 +638,13 @@ export default function DashboardPage() {
           <h2 className="text-lg font-semibold text-white mb-4">
             Expenses by Payment Method
           </h2>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <PaymentMethodCard
               icon={<CreditCard className="w-5 h-5" />}
               label="Company Card"
               amount={companyCard}
               total={totalExpenses}
               color="blue"
-            />
-            <PaymentMethodCard
-              icon={<ArrowUpRight className="w-5 h-5" />}
-              label="Personal Card"
-              amount={personalCard}
-              total={totalExpenses}
-              color="purple"
             />
             <PaymentMethodCard
               icon={<Landmark className="w-5 h-5" />}

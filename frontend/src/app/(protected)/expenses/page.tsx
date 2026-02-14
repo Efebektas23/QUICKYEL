@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -19,9 +19,11 @@ import {
   HelpCircle,
   ExternalLink,
   Trash2,
+  Calendar,
+  CreditCard,
 } from "lucide-react";
 import Link from "next/link";
-import { expensesApi } from "@/lib/firebase-api";
+import { expensesApi, cardsApi } from "@/lib/firebase-api";
 import { formatCurrency, formatDate, cn } from "@/lib/utils";
 import { categoryLabels, categoryColors } from "@/lib/store";
 import { ReviewModal } from "@/components/expenses/ReviewModal";
@@ -38,24 +40,99 @@ const categoryIcons: Record<string, React.ReactNode> = {
   uncategorized: <HelpCircle className="w-4 h-4" />,
 };
 
+// Quarter filter options
+const QUARTER_OPTIONS = [
+  { id: "q1_2025", label: "Q1 2025 (Jan–Mar)", start: "2025-01-01", end: "2025-03-31" },
+  { id: "q2_2025", label: "Q2 2025 (Apr–Jun)", start: "2025-04-01", end: "2025-06-30" },
+  { id: "q3_2025", label: "Q3 2025 (Jul–Sep)", start: "2025-07-01", end: "2025-09-30" },
+  { id: "q4_2025", label: "Q4 2025 (Oct–Dec)", start: "2025-10-01", end: "2025-12-31" },
+  { id: "q1_2026", label: "Q1 2026 (Jan–Mar)", start: "2026-01-01", end: "2026-03-31" },
+  { id: "q2_2026", label: "Q2 2026 (Apr–Jun)", start: "2026-04-01", end: "2026-06-30" },
+  { id: "q3_2026", label: "Q3 2026 (Jul–Sep)", start: "2026-07-01", end: "2026-09-30" },
+  { id: "q4_2026", label: "Q4 2026 (Oct–Dec)", start: "2026-10-01", end: "2026-12-31" },
+];
+
 export default function ExpensesPage() {
   const [page, setPage] = useState(1);
   const [filter, setFilter] = useState<{
     category?: string;
     verified_only?: boolean;
+    quarter?: string;
+    card_last_4?: string;
   }>({});
   const [selectedExpense, setSelectedExpense] = useState<any>(null);
   const [showFilters, setShowFilters] = useState(false);
+  const pageSize = 20;
 
-  const { data, isLoading, refetch } = useQuery({
-    queryKey: ["expenses", page, filter],
-    queryFn: () =>
-      expensesApi.list({
-        page,
-        per_page: 20,
-        ...filter,
-      }),
+  // Fetch all expenses for proper client-side filtering
+  const { data: allData, isLoading, refetch } = useQuery({
+    queryKey: ["expenses", "all"],
+    queryFn: () => expensesApi.list({ per_page: 1000 }),
   });
+
+  // Fetch cards for card-based filtering
+  const { data: cards } = useQuery({
+    queryKey: ["cards"],
+    queryFn: () => cardsApi.list(),
+  });
+
+  // Apply all filters client-side
+  const filteredData = useMemo(() => {
+    if (!allData?.expenses) return { expenses: [] as any[], total: 0 };
+    let expenses = [...allData.expenses];
+
+    // Category filter
+    if (filter.category) {
+      expenses = expenses.filter((e: any) => e.category === filter.category);
+    }
+
+    // Status filter
+    if (filter.verified_only !== undefined) {
+      expenses = expenses.filter((e: any) => e.is_verified === filter.verified_only);
+    }
+
+    // Quarter filter
+    if (filter.quarter) {
+      const quarter = QUARTER_OPTIONS.find((q) => q.id === filter.quarter);
+      if (quarter) {
+        const startDate = new Date(quarter.start);
+        const endDate = new Date(quarter.end);
+        endDate.setHours(23, 59, 59, 999);
+        expenses = expenses.filter((e: any) => {
+          if (!e.transaction_date) return false;
+          const txDate = new Date(e.transaction_date);
+          return txDate >= startDate && txDate <= endDate;
+        });
+      }
+    }
+
+    // Card filter
+    if (filter.card_last_4) {
+      expenses = expenses.filter((e: any) => e.card_last_4 === filter.card_last_4);
+    }
+
+    // Sort by transaction date descending
+    expenses.sort((a: any, b: any) => {
+      const da = a.transaction_date ? new Date(a.transaction_date).getTime() : 0;
+      const db = b.transaction_date ? new Date(b.transaction_date).getTime() : 0;
+      return db - da;
+    });
+
+    return { expenses, total: expenses.length };
+  }, [allData, filter]);
+
+  // Client-side pagination
+  const totalPages = Math.ceil(filteredData.total / pageSize);
+  const paginatedExpenses = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return filteredData.expenses.slice(start, start + pageSize);
+  }, [filteredData, page, pageSize]);
+
+  // Reset page when filters change
+  const updateFilter = (newFilter: typeof filter) => {
+    setFilter(newFilter);
+    setPage(1);
+  };
 
   const handleDelete = async (id: string) => {
     if (!confirm("Are you sure you want to delete this expense?")) return;
@@ -78,7 +155,7 @@ export default function ExpensesPage() {
             Expenses
           </h1>
           <p className="text-slate-400 mt-1">
-            {data?.total || 0} total expenses
+            {filteredData.total} total expenses
           </p>
         </div>
 
@@ -108,6 +185,33 @@ export default function ExpensesPage() {
             className="card p-4"
           >
             <div className="flex flex-wrap gap-4">
+              {/* Quarter Filter */}
+              <div>
+                <label className="text-sm text-slate-400 mb-1 block">
+                  <Calendar className="w-3.5 h-3.5 inline mr-1" />
+                  Quarter
+                </label>
+                <select
+                  value={filter.quarter || ""}
+                  onChange={(e) =>
+                    updateFilter({ ...filter, quarter: e.target.value || undefined })
+                  }
+                  className="input-field min-w-[200px]"
+                >
+                  <option value="">All Periods</option>
+                  <optgroup label="2026">
+                    {QUARTER_OPTIONS.filter((q) => q.id.includes("2026")).map((q) => (
+                      <option key={q.id} value={q.id}>{q.label}</option>
+                    ))}
+                  </optgroup>
+                  <optgroup label="2025">
+                    {QUARTER_OPTIONS.filter((q) => q.id.includes("2025")).map((q) => (
+                      <option key={q.id} value={q.id}>{q.label}</option>
+                    ))}
+                  </optgroup>
+                </select>
+              </div>
+
               {/* Category Filter */}
               <div>
                 <label className="text-sm text-slate-400 mb-1 block">
@@ -116,7 +220,7 @@ export default function ExpensesPage() {
                 <select
                   value={filter.category || ""}
                   onChange={(e) =>
-                    setFilter({ ...filter, category: e.target.value || undefined })
+                    updateFilter({ ...filter, category: e.target.value || undefined })
                   }
                   className="input-field min-w-[180px]"
                 >
@@ -126,6 +230,49 @@ export default function ExpensesPage() {
                       {label}
                     </option>
                   ))}
+                </select>
+              </div>
+
+              {/* Credit Card Filter */}
+              <div>
+                <label className="text-sm text-slate-400 mb-1 block">
+                  <CreditCard className="w-3.5 h-3.5 inline mr-1" />
+                  Credit Card
+                </label>
+                <select
+                  value={filter.card_last_4 || ""}
+                  onChange={(e) =>
+                    updateFilter({ ...filter, card_last_4: e.target.value || undefined })
+                  }
+                  className="input-field min-w-[220px]"
+                >
+                  <option value="">All Cards</option>
+                  {cards && cards.length > 0 && (
+                    <>
+                      {cards.filter((c: any) => c.currency === "CAD" || !c.currency).length > 0 && (
+                        <optgroup label="CAD Cards">
+                          {cards
+                            .filter((c: any) => c.currency === "CAD" || !c.currency)
+                            .map((card: any) => (
+                              <option key={card.id} value={card.last_four}>
+                                {card.card_name} (•••• {card.last_four}) {card.is_company_card ? "- Company" : "- Personal"}
+                              </option>
+                            ))}
+                        </optgroup>
+                      )}
+                      {cards.filter((c: any) => c.currency === "USD").length > 0 && (
+                        <optgroup label="USD Cards">
+                          {cards
+                            .filter((c: any) => c.currency === "USD")
+                            .map((card: any) => (
+                              <option key={card.id} value={card.last_four}>
+                                {card.card_name} (•••• {card.last_four}) {card.is_company_card ? "- Company" : "- Personal"}
+                              </option>
+                            ))}
+                        </optgroup>
+                      )}
+                    </>
+                  )}
                 </select>
               </div>
 
@@ -144,9 +291,9 @@ export default function ExpensesPage() {
                   }
                   onChange={(e) => {
                     if (e.target.value === "") {
-                      setFilter({ ...filter, verified_only: undefined });
+                      updateFilter({ ...filter, verified_only: undefined });
                     } else {
-                      setFilter({
+                      updateFilter({
                         ...filter,
                         verified_only: e.target.value === "verified",
                       });
@@ -163,7 +310,7 @@ export default function ExpensesPage() {
               {/* Clear Filters */}
               <div className="flex items-end">
                 <button
-                  onClick={() => setFilter({})}
+                  onClick={() => updateFilter({})}
                   className="btn-ghost text-sm"
                 >
                   Clear Filters
@@ -180,7 +327,7 @@ export default function ExpensesPage() {
           <div className="p-8 text-center">
             <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-yel-500 border-r-transparent" />
           </div>
-        ) : (data?.expenses?.length ?? 0) > 0 ? (
+        ) : paginatedExpenses.length > 0 ? (
           <>
             {/* Desktop Table */}
             <div className="hidden md:block overflow-x-auto">
@@ -208,7 +355,7 @@ export default function ExpensesPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800">
-                  {data?.expenses?.map((expense: any) => (
+                  {paginatedExpenses.map((expense: any) => (
                     <ExpenseRow
                       key={expense.id}
                       expense={expense}
@@ -222,7 +369,7 @@ export default function ExpensesPage() {
 
             {/* Mobile Cards */}
             <div className="md:hidden divide-y divide-slate-800">
-              {data?.expenses?.map((expense: any) => (
+              {paginatedExpenses.map((expense: any) => (
                 <ExpenseCard
                   key={expense.id}
                   expense={expense}
@@ -252,10 +399,10 @@ export default function ExpensesPage() {
         )}
 
         {/* Pagination */}
-        {(data?.total ?? 0) > 20 && (
+        {filteredData.total > pageSize && (
           <div className="px-6 py-4 border-t border-slate-800 flex items-center justify-between">
             <p className="text-sm text-slate-400">
-              Page {page} of {Math.ceil((data?.total ?? 0) / 20)}
+              Page {page} of {totalPages} ({filteredData.total} results)
             </p>
             <div className="flex gap-2">
               <button
@@ -267,7 +414,7 @@ export default function ExpensesPage() {
               </button>
               <button
                 onClick={() => setPage((p) => p + 1)}
-                disabled={page >= Math.ceil((data?.total ?? 0) / 20)}
+                disabled={page >= totalPages}
                 className="btn-ghost text-sm disabled:opacity-50"
               >
                 Next
