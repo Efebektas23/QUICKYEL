@@ -13,9 +13,11 @@ import {
   Info,
   AlertTriangle,
   CheckCircle,
+  CreditCard,
 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import toast from "react-hot-toast";
-import { expensesApi, revenueApi, storageApi } from "@/lib/firebase-api";
+import { expensesApi, revenueApi, storageApi, cardsApi } from "@/lib/firebase-api";
 import { EXPENSE_CATEGORIES, getCategoryTooltip } from "@/lib/categories";
 import { cn } from "@/lib/utils";
 
@@ -31,6 +33,14 @@ export function ManualEntryModal({ isOpen, onClose, onSuccess }: ManualEntryModa
   const [isFetchingRate, setIsFetchingRate] = useState(false);
   const [proofFile, setProofFile] = useState<File | null>(null);
   const [proofPreview, setProofPreview] = useState<string | null>(null);
+  const [selectedCardLast4, setSelectedCardLast4] = useState<string>("");
+
+  // Fetch cards for card selection
+  const { data: cards } = useQuery({
+    queryKey: ["cards"],
+    queryFn: () => cardsApi.list(),
+    enabled: isOpen,
+  });
   
   const [formData, setFormData] = useState({
     date: new Date().toISOString().split("T")[0],
@@ -113,6 +123,12 @@ export function ManualEntryModal({ isOpen, onClose, onSuccess }: ManualEntryModa
 
       toast.loading("Saving expense...", { id: "manual-entry" });
 
+      // Determine card and payment source from selected card
+      const selectedCard = cards?.find((c: any) => c.last_four === selectedCardLast4);
+      const paymentSource = selectedCard
+        ? (selectedCard.is_company_card ? "company_card" : "personal_card")
+        : formData.payment_source;
+
       // Create the manual expense entry
       await expensesApi.create({
         vendor_name: formData.vendor_name,
@@ -128,8 +144,8 @@ export function ManualEntryModal({ isOpen, onClose, onSuccess }: ManualEntryModa
         pst_amount: 0,
         exchange_rate: exchangeRate,
         cad_amount: Math.round(amountCad * 100) / 100,
-        card_last_4: null,
-        payment_source: formData.payment_source,
+        card_last_4: selectedCardLast4 || null,
+        payment_source: paymentSource,
         receipt_image_url: proofImageUrl,
         proof_image_url: proofImageUrl,
         raw_ocr_text: null,
@@ -157,6 +173,7 @@ export function ManualEntryModal({ isOpen, onClose, onSuccess }: ManualEntryModa
       });
       setProofFile(null);
       setProofPreview(null);
+      setSelectedCardLast4("");
       
     } catch (error: any) {
       console.error("Failed to add manual expense:", error);
@@ -348,67 +365,132 @@ export function ManualEntryModal({ isOpen, onClose, onSuccess }: ManualEntryModa
               )}
             </div>
 
-            {/* Payment Source */}
+            {/* Payment Card */}
             <div>
               <label className="block text-sm font-medium text-slate-300 mb-2">
-                Payment Source
+                <CreditCard className="w-4 h-4 inline mr-2" />
+                Payment Card
               </label>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setFormData({ ...formData, payment_source: "company_card" })}
-                  className={cn(
-                    "py-2 px-3 rounded-lg text-sm font-medium transition-colors border",
-                    formData.payment_source === "company_card"
-                      ? "bg-blue-600 border-blue-500 text-white"
-                      : "bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700"
-                  )}
-                >
-                  Company Card
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setFormData({ ...formData, payment_source: "personal_card" })}
-                  className={cn(
-                    "py-2 px-3 rounded-lg text-sm font-medium transition-colors border",
-                    formData.payment_source === "personal_card"
-                      ? "bg-purple-600 border-purple-500 text-white"
-                      : "bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700"
-                  )}
-                >
-                  Personal Card
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setFormData({ ...formData, payment_source: "bank_checking" })}
-                  className={cn(
-                    "py-2 px-3 rounded-lg text-sm font-medium transition-colors border",
-                    formData.payment_source === "bank_checking"
-                      ? "bg-emerald-600 border-emerald-500 text-white"
-                      : "bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700"
-                  )}
-                >
-                  Bank / Checking
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setFormData({ ...formData, payment_source: "e_transfer" })}
-                  className={cn(
-                    "py-2 px-3 rounded-lg text-sm font-medium transition-colors border",
-                    formData.payment_source === "e_transfer"
-                      ? "bg-amber-600 border-amber-500 text-white"
-                      : "bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700"
-                  )}
-                >
-                  e-Transfer
-                </button>
-              </div>
-              {formData.payment_source === "personal_card" && (
-                <p className="text-xs text-purple-400 mt-2">
-                  → Will be added to &quot;Due to Shareholder&quot;
-                </p>
-              )}
+              <select
+                value={selectedCardLast4}
+                onChange={(e) => {
+                  setSelectedCardLast4(e.target.value);
+                  // Auto-set payment source based on card
+                  if (e.target.value) {
+                    const card = cards?.find((c: any) => c.last_four === e.target.value);
+                    if (card) {
+                      setFormData(prev => ({
+                        ...prev,
+                        payment_source: card.is_company_card ? "company_card" : "personal_card"
+                      }));
+                    }
+                  }
+                }}
+                className="input w-full"
+              >
+                <option value="">No card / Other payment</option>
+                {cards && (() => {
+                  const cadCards = cards.filter((c: any) => c.currency === "CAD");
+                  const usdCards = cards.filter((c: any) => c.currency === "USD");
+                  const otherCards = cards.filter((c: any) => !c.currency);
+                  return (
+                    <>
+                      {cadCards.length > 0 && (
+                        <optgroup label="CAD Cards">
+                          {cadCards.map((card: any) => (
+                            <option key={card.id} value={card.last_four}>
+                              {card.card_name} (•••• {card.last_four}) - {card.is_company_card ? "Company" : "Personal"}
+                            </option>
+                          ))}
+                        </optgroup>
+                      )}
+                      {usdCards.length > 0 && (
+                        <optgroup label="USD Cards">
+                          {usdCards.map((card: any) => (
+                            <option key={card.id} value={card.last_four}>
+                              {card.card_name} (•••• {card.last_four}) - {card.is_company_card ? "Company" : "Personal"}
+                            </option>
+                          ))}
+                        </optgroup>
+                      )}
+                      {otherCards.length > 0 && (
+                        <optgroup label="Other Cards">
+                          {otherCards.map((card: any) => (
+                            <option key={card.id} value={card.last_four}>
+                              {card.card_name} (•••• {card.last_four}) - {card.is_company_card ? "Company" : "Personal"}
+                            </option>
+                          ))}
+                        </optgroup>
+                      )}
+                    </>
+                  );
+                })()}
+              </select>
             </div>
+
+            {/* Payment Source (shown when no card selected) */}
+            {!selectedCardLast4 && (
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-2">
+                  Payment Source
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, payment_source: "company_card" })}
+                    className={cn(
+                      "py-2 px-3 rounded-lg text-sm font-medium transition-colors border",
+                      formData.payment_source === "company_card"
+                        ? "bg-blue-600 border-blue-500 text-white"
+                        : "bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700"
+                    )}
+                  >
+                    Company Card
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, payment_source: "personal_card" })}
+                    className={cn(
+                      "py-2 px-3 rounded-lg text-sm font-medium transition-colors border",
+                      formData.payment_source === "personal_card"
+                        ? "bg-purple-600 border-purple-500 text-white"
+                        : "bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700"
+                    )}
+                  >
+                    Personal Card
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, payment_source: "bank_checking" })}
+                    className={cn(
+                      "py-2 px-3 rounded-lg text-sm font-medium transition-colors border",
+                      formData.payment_source === "bank_checking"
+                        ? "bg-emerald-600 border-emerald-500 text-white"
+                        : "bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700"
+                    )}
+                  >
+                    Bank / Checking
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, payment_source: "e_transfer" })}
+                    className={cn(
+                      "py-2 px-3 rounded-lg text-sm font-medium transition-colors border",
+                      formData.payment_source === "e_transfer"
+                        ? "bg-amber-600 border-amber-500 text-white"
+                        : "bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700"
+                    )}
+                  >
+                    e-Transfer
+                  </button>
+                </div>
+                {formData.payment_source === "personal_card" && (
+                  <p className="text-xs text-purple-400 mt-2">
+                    → Will be added to &quot;Due to Shareholder&quot;
+                  </p>
+                )}
+              </div>
+            )}
 
             {/* Proof of Payment (Optional) */}
             <div>

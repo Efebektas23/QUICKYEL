@@ -258,32 +258,42 @@ export default function ExpensesPage() {
                   className="input-field min-w-[220px]"
                 >
                   <option value="">All Cards</option>
-                  {cards && cards.length > 0 && (
-                    <>
-                      {cards.filter((c: any) => c.currency === "CAD" || !c.currency).length > 0 && (
-                        <optgroup label="CAD Cards">
-                          {cards
-                            .filter((c: any) => c.currency === "CAD" || !c.currency)
-                            .map((card: any) => (
+                  {cards && cards.length > 0 && (() => {
+                    const cadCards = cards.filter((c: any) => c.currency === "CAD");
+                    const usdCards = cards.filter((c: any) => c.currency === "USD");
+                    const otherCards = cards.filter((c: any) => !c.currency);
+                    return (
+                      <>
+                        {cadCards.length > 0 && (
+                          <optgroup label="CAD Cards">
+                            {cadCards.map((card: any) => (
                               <option key={card.id} value={card.last_four}>
                                 {card.card_name} (•••• {card.last_four}) {card.is_company_card ? "- Company" : "- Personal"}
                               </option>
                             ))}
-                        </optgroup>
-                      )}
-                      {cards.filter((c: any) => c.currency === "USD").length > 0 && (
-                        <optgroup label="USD Cards">
-                          {cards
-                            .filter((c: any) => c.currency === "USD")
-                            .map((card: any) => (
+                          </optgroup>
+                        )}
+                        {usdCards.length > 0 && (
+                          <optgroup label="USD Cards">
+                            {usdCards.map((card: any) => (
                               <option key={card.id} value={card.last_four}>
                                 {card.card_name} (•••• {card.last_four}) {card.is_company_card ? "- Company" : "- Personal"}
                               </option>
                             ))}
-                        </optgroup>
-                      )}
-                    </>
-                  )}
+                          </optgroup>
+                        )}
+                        {otherCards.length > 0 && (
+                          <optgroup label="Cards (No Currency Set)">
+                            {otherCards.map((card: any) => (
+                              <option key={card.id} value={card.last_four}>
+                                {card.card_name} (•••• {card.last_four}) {card.is_company_card ? "- Company" : "- Personal"}
+                              </option>
+                            ))}
+                          </optgroup>
+                        )}
+                      </>
+                    );
+                  })()}
                 </select>
               </div>
 

@@ -15,8 +15,9 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { useForm } from "react-hook-form";
+import { useQuery } from "@tanstack/react-query";
 import toast from "react-hot-toast";
-import { expensesApi } from "@/lib/firebase-api";
+import { expensesApi, cardsApi } from "@/lib/firebase-api";
 import { formatCurrency, formatDate, cn } from "@/lib/utils";
 import { categoryLabels } from "@/lib/store";
 
@@ -35,6 +36,13 @@ export function ReviewModal({
 }: ReviewModalProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Fetch registered cards for card selection
+  const { data: cards } = useQuery({
+    queryKey: ["cards"],
+    queryFn: () => cardsApi.list(),
+    enabled: isOpen,
+  });
+
   const { register, handleSubmit, watch, setValue } = useForm({
     defaultValues: {
       vendor_name: expense.vendor_name || "",
@@ -46,6 +54,7 @@ export function ReviewModal({
       gst_amount: expense.gst_amount || 0,
       hst_amount: expense.hst_amount || 0,
       pst_amount: expense.pst_amount || 0,
+      card_last_4: expense.card_last_4 || "",
       notes: expense.notes || "",
     },
   });
@@ -53,9 +62,16 @@ export function ReviewModal({
   const onSubmit = async (data: any) => {
     setIsSubmitting(true);
     try {
+      // Find the selected card to determine payment_source
+      const selectedCard = cards?.find((c: any) => c.last_four === data.card_last_4);
+      
       await expensesApi.update(expense.id, {
         ...data,
         transaction_date: new Date(data.transaction_date).toISOString(),
+        card_last_4: data.card_last_4 || null,
+        payment_source: selectedCard
+          ? (selectedCard.is_company_card ? "company_card" : "personal_card")
+          : expense.payment_source || "unknown",
         is_verified: true,
       });
       onSave();
@@ -69,7 +85,20 @@ export function ReviewModal({
   const verifyWithoutChanges = async () => {
     setIsSubmitting(true);
     try {
-      await expensesApi.verify(expense.id);
+      const selectedCardValue = watch("card_last_4");
+      // If user selected a card, save it even when verifying without other changes
+      if (selectedCardValue && selectedCardValue !== (expense.card_last_4 || "")) {
+        const selectedCard = cards?.find((c: any) => c.last_four === selectedCardValue);
+        await expensesApi.update(expense.id, {
+          card_last_4: selectedCardValue,
+          payment_source: selectedCard
+            ? (selectedCard.is_company_card ? "company_card" : "personal_card")
+            : expense.payment_source || "unknown",
+          is_verified: true,
+        });
+      } else {
+        await expensesApi.verify(expense.id);
+      }
       onSave();
     } catch (error: any) {
       toast.error(error.response?.data?.detail || "Failed to verify expense");
@@ -258,6 +287,53 @@ export function ReviewModal({
                       = {formatCurrency(watch("original_amount") * expense.exchange_rate)} CAD
                     </p>
                   )}
+                </div>
+
+                {/* Payment Card */}
+                <div>
+                  <label className="flex items-center gap-2 text-sm font-medium text-slate-300 mb-2">
+                    <CreditCard className="w-4 h-4" />
+                    Payment Card
+                  </label>
+                  <select {...register("card_last_4")} className="input-field">
+                    <option value="">Not specified</option>
+                    {cards && (() => {
+                      const cadCards = cards.filter((c: any) => c.currency === "CAD");
+                      const usdCards = cards.filter((c: any) => c.currency === "USD");
+                      const otherCards = cards.filter((c: any) => !c.currency);
+                      return (
+                        <>
+                          {cadCards.length > 0 && (
+                            <optgroup label="CAD Cards">
+                              {cadCards.map((card: any) => (
+                                <option key={card.id} value={card.last_four}>
+                                  {card.card_name} (•••• {card.last_four}) - {card.is_company_card ? "Company" : "Personal"}
+                                </option>
+                              ))}
+                            </optgroup>
+                          )}
+                          {usdCards.length > 0 && (
+                            <optgroup label="USD Cards">
+                              {usdCards.map((card: any) => (
+                                <option key={card.id} value={card.last_four}>
+                                  {card.card_name} (•••• {card.last_four}) - {card.is_company_card ? "Company" : "Personal"}
+                                </option>
+                              ))}
+                            </optgroup>
+                          )}
+                          {otherCards.length > 0 && (
+                            <optgroup label="Other Cards">
+                              {otherCards.map((card: any) => (
+                                <option key={card.id} value={card.last_four}>
+                                  {card.card_name} (•••• {card.last_four}) - {card.is_company_card ? "Company" : "Personal"}
+                                </option>
+                              ))}
+                            </optgroup>
+                          )}
+                        </>
+                      );
+                    })()}
+                  </select>
                 </div>
 
                 {/* Tax Amounts (Only for Canada) - Separate fields for GST, HST, PST */}

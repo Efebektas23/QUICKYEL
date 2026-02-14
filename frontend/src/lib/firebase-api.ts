@@ -755,12 +755,18 @@ export const cardsApi = {
     return cards;
   },
 
-  create: async (data: { last_four: string; card_name: string; is_company_card: boolean }): Promise<string> => {
+  create: async (data: { last_four: string; card_name: string; is_company_card: boolean; currency?: "CAD" | "USD" }): Promise<string> => {
     const docRef = await addDoc(collection(db, CARDS_COLLECTION), {
       ...data,
       created_at: Timestamp.fromDate(new Date()),
     });
     return docRef.id;
+  },
+
+  update: async (id: string, data: Partial<Card>): Promise<void> => {
+    const docRef = doc(db, CARDS_COLLECTION, id);
+    const { id: _, created_at, ...updateData } = data;
+    await updateDoc(docRef, updateData);
   },
 
   delete: async (id: string): Promise<void> => {

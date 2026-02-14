@@ -51,10 +51,27 @@ export default function CardsPage() {
     },
   });
 
+  const updateCurrencyMutation = useMutation({
+    mutationFn: ({ id, currency }: { id: string; currency: "CAD" | "USD" }) =>
+      cardsApi.update(id, { currency }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["cards"] });
+      toast.success("Card currency updated");
+    },
+    onError: (error: any) => {
+      toast.error("Failed to update card currency");
+    },
+  });
+
   const handleDelete = (id: string) => {
     if (confirm("Remove this card?")) {
       deleteMutation.mutate(id);
     }
+  };
+
+  const handleCurrencyToggle = (card: any) => {
+    const newCurrency = card.currency === "USD" ? "CAD" : "USD";
+    updateCurrencyMutation.mutate({ id: card.id, currency: newCurrency });
   };
 
   return (
@@ -135,25 +152,30 @@ export default function CardsPage() {
                     </div>
                     <p className="text-slate-500 text-sm flex items-center gap-2">
                       <span>•••• •••• •••• {card.last_four}</span>
-                      {card.currency && (
-                        <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${
+                      <button
+                        onClick={() => handleCurrencyToggle(card)}
+                        disabled={updateCurrencyMutation.isPending}
+                        className={`text-xs px-1.5 py-0.5 rounded font-medium cursor-pointer hover:opacity-80 transition-opacity ${
                           card.currency === "USD" 
                             ? "bg-blue-500/10 text-blue-400" 
                             : "bg-emerald-500/10 text-emerald-400"
-                        }`}>
-                          {card.currency}
-                        </span>
-                      )}
+                        }`}
+                        title="Click to toggle currency"
+                      >
+                        {card.currency || "CAD"}
+                      </button>
                     </p>
                   </div>
                 </div>
-                <button
-                  onClick={() => handleDelete(card.id)}
-                  disabled={deleteMutation.isPending}
-                  className="p-2 text-slate-400 hover:text-red-500 hover:bg-slate-800 rounded-lg transition-colors"
-                >
-                  <Trash2 className="w-5 h-5" />
-                </button>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => handleDelete(card.id)}
+                    disabled={deleteMutation.isPending}
+                    className="p-2 text-slate-400 hover:text-red-500 hover:bg-slate-800 rounded-lg transition-colors"
+                  >
+                    <Trash2 className="w-5 h-5" />
+                  </button>
+                </div>
               </motion.div>
             ))}
           </div>
