@@ -40,16 +40,21 @@ const categoryIcons: Record<string, React.ReactNode> = {
   uncategorized: <HelpCircle className="w-4 h-4" />,
 };
 
-// Quarter filter options
-const QUARTER_OPTIONS = [
-  { id: "q1_2025", label: "Q1 2025 (Jan–Mar)", start: "2025-01-01", end: "2025-03-31" },
-  { id: "q2_2025", label: "Q2 2025 (Apr–Jun)", start: "2025-04-01", end: "2025-06-30" },
-  { id: "q3_2025", label: "Q3 2025 (Jul–Sep)", start: "2025-07-01", end: "2025-09-30" },
-  { id: "q4_2025", label: "Q4 2025 (Oct–Dec)", start: "2025-10-01", end: "2025-12-31" },
-  { id: "q1_2026", label: "Q1 2026 (Jan–Mar)", start: "2026-01-01", end: "2026-03-31" },
-  { id: "q2_2026", label: "Q2 2026 (Apr–Jun)", start: "2026-04-01", end: "2026-06-30" },
-  { id: "q3_2026", label: "Q3 2026 (Jul–Sep)", start: "2026-07-01", end: "2026-09-30" },
-  { id: "q4_2026", label: "Q4 2026 (Oct–Dec)", start: "2026-10-01", end: "2026-12-31" },
+// Period filter options (Fiscal Years + Quarters)
+const PERIOD_OPTIONS = [
+  // Fiscal Years
+  { id: "fy_2025", label: "Fiscal Year 2025", group: "year", start: "2025-01-01", end: "2025-12-31" },
+  { id: "fy_2026", label: "Fiscal Year 2026", group: "year", start: "2026-01-01", end: "2026-12-31" },
+  // 2025 Quarters
+  { id: "q1_2025", label: "Q1 2025 (Jan–Mar)", group: "2025", start: "2025-01-01", end: "2025-03-31" },
+  { id: "q2_2025", label: "Q2 2025 (Apr–Jun)", group: "2025", start: "2025-04-01", end: "2025-06-30" },
+  { id: "q3_2025", label: "Q3 2025 (Jul–Sep)", group: "2025", start: "2025-07-01", end: "2025-09-30" },
+  { id: "q4_2025", label: "Q4 2025 (Oct–Dec)", group: "2025", start: "2025-10-01", end: "2025-12-31" },
+  // 2026 Quarters
+  { id: "q1_2026", label: "Q1 2026 (Jan–Mar)", group: "2026", start: "2026-01-01", end: "2026-03-31" },
+  { id: "q2_2026", label: "Q2 2026 (Apr–Jun)", group: "2026", start: "2026-04-01", end: "2026-06-30" },
+  { id: "q3_2026", label: "Q3 2026 (Jul–Sep)", group: "2026", start: "2026-07-01", end: "2026-09-30" },
+  { id: "q4_2026", label: "Q4 2026 (Oct–Dec)", group: "2026", start: "2026-10-01", end: "2026-12-31" },
 ];
 
 export default function ExpensesPage() {
@@ -93,7 +98,7 @@ export default function ExpensesPage() {
 
     // Quarter filter
     if (filter.quarter) {
-      const quarter = QUARTER_OPTIONS.find((q) => q.id === filter.quarter);
+      const quarter = PERIOD_OPTIONS.find((q) => q.id === filter.quarter);
       if (quarter) {
         const startDate = new Date(quarter.start);
         const endDate = new Date(quarter.end);
@@ -185,28 +190,33 @@ export default function ExpensesPage() {
             className="card p-4"
           >
             <div className="flex flex-wrap gap-4">
-              {/* Quarter Filter */}
+              {/* Period / Quarter Filter */}
               <div>
                 <label className="text-sm text-slate-400 mb-1 block">
                   <Calendar className="w-3.5 h-3.5 inline mr-1" />
-                  Quarter
+                  Period
                 </label>
                 <select
                   value={filter.quarter || ""}
                   onChange={(e) =>
                     updateFilter({ ...filter, quarter: e.target.value || undefined })
                   }
-                  className="input-field min-w-[200px]"
+                  className="input-field min-w-[220px]"
                 >
                   <option value="">All Periods</option>
-                  <optgroup label="2026">
-                    {QUARTER_OPTIONS.filter((q) => q.id.includes("2026")).map((q) => (
-                      <option key={q.id} value={q.id}>{q.label}</option>
+                  <optgroup label="Fiscal Year">
+                    {PERIOD_OPTIONS.filter((p) => p.group === "year").map((p) => (
+                      <option key={p.id} value={p.id}>{p.label}</option>
                     ))}
                   </optgroup>
-                  <optgroup label="2025">
-                    {QUARTER_OPTIONS.filter((q) => q.id.includes("2025")).map((q) => (
-                      <option key={q.id} value={q.id}>{q.label}</option>
+                  <optgroup label="2026 Quarters">
+                    {PERIOD_OPTIONS.filter((p) => p.group === "2026").map((p) => (
+                      <option key={p.id} value={p.id}>{p.label}</option>
+                    ))}
+                  </optgroup>
+                  <optgroup label="2025 Quarters">
+                    {PERIOD_OPTIONS.filter((p) => p.group === "2025").map((p) => (
+                      <option key={p.id} value={p.id}>{p.label}</option>
                     ))}
                   </optgroup>
                 </select>

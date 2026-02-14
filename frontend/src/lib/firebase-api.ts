@@ -171,6 +171,19 @@ export const storageApi = {
   },
 };
 
+// ============ DUPLICATE RECEIPT DETECTION ============
+
+/**
+ * Compute SHA-256 hash of file content for duplicate receipt detection.
+ * Same file → same hash (deterministic).
+ */
+async function computeReceiptHash(file: File): Promise<string> {
+  const buffer = await file.arrayBuffer();
+  const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return 'receipt_' + hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
 // ============ EXPENSES ============
 
 export const expensesApi = {
@@ -289,6 +302,16 @@ export const expensesApi = {
   uploadMultiple: async (files: File[]): Promise<Expense> => {
     console.log(`📤 Starting upload for ${files.length} file(s)`);
     
+    // 0. Check for exact file duplicate (same image file uploaded before)
+    console.log("🔍 Checking for duplicate file...");
+    const primaryFileHash = await computeReceiptHash(files[0]);
+    const hashDocSnap = await getDoc(doc(db, IMPORT_HASHES_COLLECTION, primaryFileHash));
+    if (hashDocSnap.exists()) {
+      throw new Error(
+        "DUPLICATE_RECEIPT: This exact receipt image has already been uploaded. Please check your expenses list."
+      );
+    }
+    
     // 1. Upload all images to Firebase Storage
     const imageUrls: string[] = [];
     try {
@@ -350,6 +373,71 @@ export const expensesApi = {
       
       const result = await response.json();
       console.log("✅ Backend processing complete:", result);
+      
+      // 3.5 Check for duplicate receipt (different photo of same receipt)
+      // Compares vendor + amount + date against existing receipt-based expenses
+      const parsedAmount = result.cad_amount || result.total_amount || 0;
+      const parsedDateStr = result.transaction_date || "";
+      const parsedVendor = (result.vendor_name || "").toLowerCase().trim();
+      
+      if (parsedAmount > 0 && parsedDateStr && parsedVendor) {
+        console.log("🔍 Checking for duplicate receipt data...");
+        try {
+          const allExpSnap = await getDocs(collection(db, EXPENSES_COLLECTION));
+          
+          for (const existingDoc of allExpSnap.docs) {
+            if (existingDoc.id === expenseId) continue; // Skip our placeholder
+            const data = existingDoc.data();
+            
+            // Only check expenses that have receipt images (uploaded via OCR/receipt)
+            if (!data.receipt_image_url) continue;
+            
+            const existingAmount = data.cad_amount || 0;
+            const existingDate = data.transaction_date
+              ? (typeof data.transaction_date === "string"
+                ? data.transaction_date
+                : "")
+              : "";
+            const existingVendor = (data.vendor_name || "").toLowerCase().trim();
+            
+            // Check: amount within $1 tolerance
+            const amountMatch = Math.abs(parsedAmount - existingAmount) < 1.0;
+            // Check: same date
+            const dateMatch = existingDate && parsedDateStr && existingDate === parsedDateStr;
+            // Check: similar vendor name
+            let vendorMatch = false;
+            if (parsedVendor && existingVendor) {
+              if (parsedVendor === existingVendor) {
+                vendorMatch = true;
+              } else {
+                const rWords = parsedVendor.split(/[\s,.\-\/]+/).filter((w: string) => w.length > 2);
+                const eWords = existingVendor.split(/[\s,.\-\/]+/).filter((w: string) => w.length > 2);
+                vendorMatch = rWords.some((rw: string) =>
+                  eWords.some((ew: string) => ew.includes(rw) || rw.includes(ew))
+                );
+              }
+            }
+            
+            if (amountMatch && dateMatch && vendorMatch) {
+              console.log(`⚠️ Duplicate receipt detected! Matches expense ${existingDoc.id}: ${data.vendor_name} $${existingAmount}`);
+              
+              // Clean up: delete uploaded images and placeholder expense
+              for (const url of imageUrls) {
+                try { await storageApi.deleteReceipt(url); } catch {}
+              }
+              await deleteDoc(doc(db, EXPENSES_COLLECTION, expenseId));
+              
+              throw new Error(
+                `DUPLICATE_RECEIPT: This receipt appears to have been uploaded before. ` +
+                `Matching expense: ${data.vendor_name || "Unknown"} - $${existingAmount.toFixed(2)} on ${existingDate}`
+              );
+            }
+          }
+        } catch (dupErr: any) {
+          if (dupErr.message?.startsWith("DUPLICATE_RECEIPT")) throw dupErr;
+          console.warn("Duplicate check failed, continuing:", dupErr);
+        }
+      }
       
       // 4. Check for matching bank_import expense (reverse matching)
       // If the user already imported a bank CSV, find the matching transaction
@@ -448,6 +536,14 @@ export const expensesApi = {
             await deleteDoc(doc(db, EXPENSES_COLLECTION, expenseId));
             console.log(`🗑️ Deleted placeholder expense ${expenseId}, using bank record ${bestMatchId}`);
             
+            // Register receipt file hash for future duplicate detection
+            try {
+              await setDoc(doc(db, IMPORT_HASHES_COLLECTION, primaryFileHash), {
+                type: 'receipt', filename: files[0].name, expense_id: bestMatchId,
+                imported_at: Timestamp.fromDate(new Date()),
+              });
+            } catch {}
+            
             return (await expensesApi.get(bestMatchId))!;
           }
         } catch (matchErr) {
@@ -475,10 +571,22 @@ export const expensesApi = {
         entry_type: "ocr",
       });
       
+      // Register receipt file hash for future duplicate detection
+      try {
+        await setDoc(doc(db, IMPORT_HASHES_COLLECTION, primaryFileHash), {
+          type: 'receipt', filename: files[0].name, expense_id: expenseId,
+          imported_at: Timestamp.fromDate(new Date()),
+        });
+      } catch {}
+      
       return (await expensesApi.get(expenseId))!;
       
     } catch (error: any) {
       console.error("❌ Processing error:", error);
+      if (error.message?.startsWith("DUPLICATE_RECEIPT")) {
+        // Cleanup already handled in the duplicate check, just re-throw
+        throw error;
+      }
       await expensesApi.update(expenseId, {
         processing_status: "error",
         error_message: error.message,

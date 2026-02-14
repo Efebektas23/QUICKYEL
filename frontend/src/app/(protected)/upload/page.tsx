@@ -16,6 +16,7 @@ import {
   Plus,
   X,
   PenLine,
+  AlertTriangle,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { expensesApi } from "@/lib/firebase-api";
@@ -97,8 +98,15 @@ export default function UploadPage() {
       }, 500);
     } catch (err: any) {
       setUploadState("error");
-      setError(err.message || "Failed to process receipt");
-      toast.error("Failed to process receipt");
+      if (err.message?.startsWith("DUPLICATE_RECEIPT")) {
+        // Extract the readable part after the prefix
+        const msg = err.message.replace("DUPLICATE_RECEIPT: ", "");
+        setError(msg);
+        toast.error("Duplicate receipt detected!");
+      } else {
+        setError(err.message || "Failed to process receipt");
+        toast.error("Failed to process receipt");
+      }
     }
   };
 
@@ -300,17 +308,45 @@ export default function UploadPage() {
 
               {/* Error Message */}
               {error && (
-                <div className="mt-4 p-4 rounded-xl bg-red-500/10 border border-red-500/20">
-                  <div className="flex items-center gap-3">
-                    <XCircle className="w-5 h-5 text-red-500 flex-shrink-0" />
+                <div className={`mt-4 p-4 rounded-xl border ${
+                  error.includes("already been uploaded") || error.includes("appears to have been uploaded")
+                    ? "bg-amber-500/10 border-amber-500/20"
+                    : "bg-red-500/10 border-red-500/20"
+                }`}>
+                  <div className="flex items-start gap-3">
+                    {error.includes("already been uploaded") || error.includes("appears to have been uploaded") ? (
+                      <AlertTriangle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
+                    ) : (
+                      <XCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
+                    )}
                     <div>
-                      <p className="text-red-400 font-medium">{error}</p>
-                      <button
-                        onClick={reset}
-                        className="text-sm text-red-500 hover:text-red-400 mt-1"
-                      >
-                        Try Again
-                      </button>
+                      <p className={`font-medium ${
+                        error.includes("already been uploaded") || error.includes("appears to have been uploaded")
+                          ? "text-amber-400"
+                          : "text-red-400"
+                      }`}>
+                        {error.includes("already been uploaded") || error.includes("appears to have been uploaded")
+                          ? "Duplicate Receipt Detected"
+                          : "Processing Error"
+                        }
+                      </p>
+                      <p className="text-slate-400 text-sm mt-1">{error}</p>
+                      <div className="flex gap-3 mt-3">
+                        <button
+                          onClick={reset}
+                          className="text-sm text-slate-300 hover:text-white font-medium"
+                        >
+                          Upload Different Receipt
+                        </button>
+                        {(error.includes("already been uploaded") || error.includes("appears to have been uploaded")) && (
+                          <button
+                            onClick={() => router.push("/expenses")}
+                            className="text-sm text-amber-500 hover:text-amber-400 font-medium"
+                          >
+                            View Expenses
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
