@@ -33,6 +33,8 @@ quickyel.db
 !tailwind.config.ts
 !*.config.json
 !railway.json
+!frontend/public/manifest.json
+!frontend/src/app/manifest.json/
 firebase-admin-key.json
 google-cloud-vision-key.json
 *-firebase-adminsdk-*.json
