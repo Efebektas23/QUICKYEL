@@ -313,33 +313,39 @@ export const expensesApi = {
   /**
    * Upload multiple receipt images and process with backend AI
    * For long receipts that need multiple photos
+   * @param skipDuplicateCheck - if true, skip all duplicate detection (user override)
    */
-  uploadMultiple: async (files: File[]): Promise<Expense> => {
-    console.log(`📤 Starting upload for ${files.length} file(s)`);
+  uploadMultiple: async (files: File[], skipDuplicateCheck = false): Promise<Expense> => {
+    console.log(`📤 Starting upload for ${files.length} file(s)${skipDuplicateCheck ? " (duplicate check skipped)" : ""}`);
     
     // 0. Check for exact file duplicate (same image file uploaded before)
-    console.log("🔍 Checking for duplicate file...");
     const primaryFileHash = await computeReceiptHash(files[0]);
-    const hashDocSnap = await getDoc(doc(db, IMPORT_HASHES_COLLECTION, primaryFileHash));
-    if (hashDocSnap.exists()) {
-      // Verify the referenced expense still exists (it may have been deleted)
-      const hashData = hashDocSnap.data();
-      if (hashData?.expense_id) {
-        const expenseDoc = await getDoc(doc(db, EXPENSES_COLLECTION, hashData.expense_id));
-        if (!expenseDoc.exists()) {
-          // Expense was deleted - clean up the orphaned hash and allow re-upload
-          console.log("🧹 Cleaning up orphaned receipt hash (expense was deleted)");
-          await deleteDoc(doc(db, IMPORT_HASHES_COLLECTION, primaryFileHash));
+    if (!skipDuplicateCheck) {
+      console.log("🔍 Checking for duplicate file...");
+      const hashDocSnap = await getDoc(doc(db, IMPORT_HASHES_COLLECTION, primaryFileHash));
+      if (hashDocSnap.exists()) {
+        // Verify the referenced expense still exists (it may have been deleted)
+        const hashData = hashDocSnap.data();
+        if (hashData?.expense_id) {
+          const expenseDoc = await getDoc(doc(db, EXPENSES_COLLECTION, hashData.expense_id));
+          if (!expenseDoc.exists()) {
+            // Expense was deleted - clean up the orphaned hash and allow re-upload
+            console.log("🧹 Cleaning up orphaned receipt hash (expense was deleted)");
+            await deleteDoc(doc(db, IMPORT_HASHES_COLLECTION, primaryFileHash));
+          } else {
+            throw new Error(
+              "DUPLICATE_RECEIPT: This exact receipt image has already been uploaded. Please check your expenses list."
+            );
+          }
         } else {
           throw new Error(
             "DUPLICATE_RECEIPT: This exact receipt image has already been uploaded. Please check your expenses list."
           );
         }
-      } else {
-        throw new Error(
-          "DUPLICATE_RECEIPT: This exact receipt image has already been uploaded. Please check your expenses list."
-        );
       }
+    } else {
+      // User overriding - clean up any existing hash for this file so we can re-register
+      try { await deleteDoc(doc(db, IMPORT_HASHES_COLLECTION, primaryFileHash)); } catch {}
     }
     
     // 1. Upload all images to Firebase Storage
@@ -411,7 +417,7 @@ export const expensesApi = {
       const parsedDateStr = result.transaction_date || "";
       const parsedVendor = (result.vendor_name || "").toLowerCase().trim();
       
-      if (parsedAmount > 0) {
+      if (parsedAmount > 0 && !skipDuplicateCheck) {
         console.log("🔍 Checking for duplicate receipt data...");
         console.log(`   Parsed: vendor="${parsedVendor}" amount=${parsedAmount} date="${parsedDateStr}"`);
         try {

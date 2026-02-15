@@ -70,7 +70,7 @@ export default function UploadPage() {
     });
   };
 
-  const processFiles = async () => {
+  const processFiles = async (skipDuplicateCheck = false) => {
     if (selectedFiles.length === 0) return;
 
     setUploadState("uploading");
@@ -87,7 +87,10 @@ export default function UploadPage() {
       setProgress(40);
 
       // Upload all files and process (multi-image support)
-      const result = await expensesApi.uploadMultiple(selectedFiles.map(f => f.file));
+      const result = await expensesApi.uploadMultiple(
+        selectedFiles.map(f => f.file),
+        skipDuplicateCheck
+      );
 
       clearInterval(progressInterval);
       setProgress(100);
@@ -312,50 +315,55 @@ export default function UploadPage() {
               )}
 
               {/* Error Message */}
-              {error && (
-                <div className={`mt-4 p-4 rounded-xl border ${
-                  error.includes("already been uploaded") || error.includes("appears to have been uploaded")
-                    ? "bg-amber-500/10 border-amber-500/20"
-                    : "bg-red-500/10 border-red-500/20"
-                }`}>
-                  <div className="flex items-start gap-3">
-                    {error.includes("already been uploaded") || error.includes("appears to have been uploaded") ? (
-                      <AlertTriangle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
-                    ) : (
-                      <XCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
-                    )}
-                    <div>
-                      <p className={`font-medium ${
-                        error.includes("already been uploaded") || error.includes("appears to have been uploaded")
-                          ? "text-amber-400"
-                          : "text-red-400"
-                      }`}>
-                        {error.includes("already been uploaded") || error.includes("appears to have been uploaded")
-                          ? "Duplicate Receipt Detected"
-                          : "Processing Error"
-                        }
-                      </p>
-                      <p className="text-slate-400 text-sm mt-1">{error}</p>
-                      <div className="flex gap-3 mt-3">
-                        <button
-                          onClick={reset}
-                          className="text-sm text-slate-300 hover:text-white font-medium"
-                        >
-                          Upload Different Receipt
-                        </button>
-                        {(error.includes("already been uploaded") || error.includes("appears to have been uploaded")) && (
+              {error && (() => {
+                const isDuplicate = error.includes("already been uploaded") || error.includes("appears to have been uploaded");
+                return (
+                  <div className={`mt-4 p-4 rounded-xl border ${
+                    isDuplicate
+                      ? "bg-amber-500/10 border-amber-500/20"
+                      : "bg-red-500/10 border-red-500/20"
+                  }`}>
+                    <div className="flex items-start gap-3">
+                      {isDuplicate ? (
+                        <AlertTriangle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
+                      ) : (
+                        <XCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
+                      )}
+                      <div className="flex-1">
+                        <p className={`font-medium ${isDuplicate ? "text-amber-400" : "text-red-400"}`}>
+                          {isDuplicate ? "Duplicate Receipt Detected" : "Processing Error"}
+                        </p>
+                        <p className="text-slate-400 text-sm mt-1">{error}</p>
+                        <div className="flex flex-wrap gap-3 mt-3">
                           <button
-                            onClick={() => router.push("/expenses")}
-                            className="text-sm text-amber-500 hover:text-amber-400 font-medium"
+                            onClick={reset}
+                            className="text-sm text-slate-300 hover:text-white font-medium"
                           >
-                            View Expenses
+                            Upload Different Receipt
                           </button>
-                        )}
+                          {isDuplicate && (
+                            <>
+                              <button
+                                onClick={() => processFiles(true)}
+                                className="text-sm text-amber-500 hover:text-amber-400 font-semibold flex items-center gap-1"
+                              >
+                                <Upload className="w-3.5 h-3.5" />
+                                Upload Anyway
+                              </button>
+                              <button
+                                onClick={() => router.push("/expenses")}
+                                className="text-sm text-slate-400 hover:text-slate-300 font-medium"
+                              >
+                                View Expenses
+                              </button>
+                            </>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
-              )}
+                );
+              })()}
             </motion.div>
           ) : (
             <motion.div
