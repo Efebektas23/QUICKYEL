@@ -47,7 +47,7 @@ export function ReviewModal({
     defaultValues: {
       vendor_name: expense.vendor_name || "",
       transaction_date: expense.transaction_date
-        ? new Date(expense.transaction_date).toISOString().split("T")[0]
+        ? String(expense.transaction_date).substring(0, 10)
         : "",
       category: expense.category || "uncategorized",
       original_amount: expense.original_amount || 0,
@@ -65,9 +65,13 @@ export function ReviewModal({
       // Find the selected card to determine payment_source
       const selectedCard = cards?.find((c: any) => c.last_four === data.card_last_4);
       
+      // Store date as noon UTC to avoid timezone shift (e.g. Feb 15 local → Feb 14 in EST)
+      const dateStr = data.transaction_date ? String(data.transaction_date).substring(0, 10) : null;
+      const isoDate = dateStr ? `${dateStr}T12:00:00.000Z` : null;
+
       await expensesApi.update(expense.id, {
         ...data,
-        transaction_date: new Date(data.transaction_date).toISOString(),
+        transaction_date: isoDate,
         card_last_4: data.card_last_4 || null,
         payment_source: selectedCard
           ? (selectedCard.is_company_card ? "company_card" : "personal_card")

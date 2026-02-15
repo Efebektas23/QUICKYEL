@@ -34,8 +34,29 @@ export function formatDate(
 ): string {
   if (!date) return "-";
 
-  const d = new Date(date);
+  // Parse date-only (YYYY-MM-DD) or ISO string as local date to avoid timezone shift.
+  // e.g. "2026-02-15T00:00:00.000Z" (midnight UTC) would display as Feb 14 in EST.
+  const str = typeof date === "string" ? date : date instanceof Date ? date.toISOString() : String(date);
+  const datePart = str.substring(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(datePart)) {
+    const [y, m, d] = datePart.split("-").map(Number);
+    const dLocal = new Date(y, m - 1, d);
+    if (format === "short") {
+      return dLocal.toLocaleDateString("en-CA", {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+      });
+    }
+    return dLocal.toLocaleDateString("en-CA", {
+      weekday: "long",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    });
+  }
 
+  const d = new Date(date);
   if (format === "short") {
     return d.toLocaleDateString("en-CA", {
       year: "numeric",
@@ -43,7 +64,6 @@ export function formatDate(
       day: "numeric",
     });
   }
-
   return d.toLocaleDateString("en-CA", {
     weekday: "long",
     year: "numeric",

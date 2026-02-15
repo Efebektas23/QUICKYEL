@@ -440,19 +440,17 @@ export const expensesApi = {
             const existingVendor = (data.vendor_name || "").toLowerCase().trim();
             
             // Score-based duplicate detection
+            // Only exact amount counts - gas stations (Petro Canada, etc.) often have
+            // many similar amounts; "within $1" caused too many false positives.
             let score = 0;
             const reasons: string[] = [];
             
-            // Amount check: very close amount is strong evidence
             const amountDiff = Math.abs(parsedAmount - existingAmount);
             if (amountDiff < 0.05) {
-              score += 50; // Exact match
+              score += 50; // Exact amount required for duplicate
               reasons.push("exact amount");
-            } else if (amountDiff < 1.0) {
-              score += 40; // Within $1
-              reasons.push(`amount ±$${amountDiff.toFixed(2)}`);
             } else {
-              continue; // Amount too different, skip
+              continue; // Amount must match exactly - skip
             }
             
             // Date check: same date is strong evidence
