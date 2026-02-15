@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   X,
@@ -43,12 +43,20 @@ export function ReviewModal({
     enabled: isOpen,
   });
 
-  const { register, handleSubmit, watch, setValue } = useForm({
+  // Convert transaction_date to YYYY-MM-DD for the date input (timezone-safe)
+  const toDateInputValue = (d: any): string => {
+    if (!d) return "";
+    if (typeof d === "string" && /^\d{4}-\d{2}-\d{2}/.test(d)) return d.substring(0, 10);
+    const date = d instanceof Date ? d : d?.toDate?.() || new Date(d);
+    if (isNaN(date.getTime())) return "";
+    // Use UTC to avoid timezone shift (e.g. 2026-02-12T00:00:00Z → Feb 11 in EST)
+    return date.toISOString().substring(0, 10);
+  };
+
+  const { register, handleSubmit, watch, setValue, reset } = useForm({
     defaultValues: {
       vendor_name: expense.vendor_name || "",
-      transaction_date: expense.transaction_date
-        ? String(expense.transaction_date).substring(0, 10)
-        : "",
+      transaction_date: toDateInputValue(expense.transaction_date),
       category: expense.category || "uncategorized",
       original_amount: expense.original_amount || 0,
       gst_amount: expense.gst_amount || 0,
@@ -58,6 +66,23 @@ export function ReviewModal({
       notes: expense.notes || "",
     },
   });
+
+  // Reset form when expense changes (e.g. open different expense)
+  useEffect(() => {
+    if (expense && isOpen) {
+      reset({
+        vendor_name: expense.vendor_name || "",
+        transaction_date: toDateInputValue(expense.transaction_date),
+        category: expense.category || "uncategorized",
+        original_amount: expense.original_amount || 0,
+        gst_amount: expense.gst_amount || 0,
+        hst_amount: expense.hst_amount || 0,
+        pst_amount: expense.pst_amount || 0,
+        card_last_4: expense.card_last_4 || "",
+        notes: expense.notes || "",
+      });
+    }
+  }, [expense?.id, isOpen, reset]);
 
   const onSubmit = async (data: any) => {
     setIsSubmitting(true);
