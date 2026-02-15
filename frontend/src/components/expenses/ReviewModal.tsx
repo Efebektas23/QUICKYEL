@@ -13,6 +13,8 @@ import {
   CreditCard,
   MapPin,
   RefreshCw,
+  Link2,
+  Landmark,
 } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { useQuery } from "@tanstack/react-query";
@@ -89,7 +91,7 @@ export function ReviewModal({
     try {
       // Find the selected card to determine payment_source
       const selectedCard = cards?.find((c: any) => c.last_four === data.card_last_4);
-      
+
       // Store date as noon UTC to avoid timezone shift (e.g. Feb 15 local → Feb 14 in EST)
       const dateStr = data.transaction_date ? String(data.transaction_date).substring(0, 10) : null;
       const isoDate = dateStr ? `${dateStr}T12:00:00.000Z` : null;
@@ -181,15 +183,36 @@ export function ReviewModal({
             {expense.receipt_linked && (
               <div className="mb-4 p-3 rounded-xl bg-blue-500/10 border border-blue-500/20">
                 <div className="flex items-center gap-2">
-                  <svg className="w-5 h-5 text-blue-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-                  </svg>
+                  <Link2 className="w-5 h-5 text-blue-400 flex-shrink-0" />
                   <div>
                     <p className="text-blue-300 text-sm font-medium">Linked to bank statement</p>
                     <p className="text-blue-400/70 text-xs">
                       This receipt has been matched with a bank import transaction. Your tax details and receipt image are now attached.
                     </p>
                   </div>
+                </div>
+              </div>
+            )}
+
+            {/* Bank Linked Info (receipt expense matched to bank) */}
+            {expense.bank_linked && (
+              <div className="mb-4 p-3 rounded-xl bg-cyan-500/10 border border-cyan-500/20">
+                <div className="flex items-center gap-2 mb-1">
+                  <Landmark className="w-5 h-5 text-cyan-400 flex-shrink-0" />
+                  <p className="text-cyan-300 text-sm font-medium">Matched with bank transaction</p>
+                </div>
+                <div className="ml-7 space-y-0.5">
+                  {expense.bank_description && (
+                    <p className="text-cyan-400/70 text-xs">Bank desc: {expense.bank_description}</p>
+                  )}
+                  {expense.bank_statement_date && (
+                    <p className="text-cyan-400/70 text-xs">Statement date: {expense.bank_statement_date}</p>
+                  )}
+                  {expense.bank_match_score && (
+                    <p className="text-cyan-400/70 text-xs">
+                      Match: {expense.bank_match_reason || 'auto-matched'} (score: {expense.bank_match_score})
+                    </p>
+                  )}
                 </div>
               </div>
             )}
@@ -222,8 +245,8 @@ export function ReviewModal({
                       {expense.jurisdiction === "usa"
                         ? "🇺🇸 United States"
                         : expense.jurisdiction === "canada"
-                        ? "🇨🇦 Canada"
-                        : "Unknown Location"}
+                          ? "🇨🇦 Canada"
+                          : "Unknown Location"}
                     </span>
                   </div>
                   {expense.original_currency === "USD" && (
@@ -372,7 +395,7 @@ export function ReviewModal({
                       <p className="text-xs text-slate-400 mb-3">
                         💡 Enter tax types separately. HST = combined GST+PST for provinces (ON, NB, NS, NL, PE)
                       </p>
-                      
+
                       {/* GST */}
                       <div className="mb-3">
                         <label className="flex items-center gap-2 text-sm font-medium text-slate-300 mb-1">
@@ -387,7 +410,7 @@ export function ReviewModal({
                         />
                         <p className="text-xs text-emerald-500 mt-0.5">Recoverable via ITC</p>
                       </div>
-                      
+
                       {/* HST */}
                       <div className="mb-3">
                         <label className="flex items-center gap-2 text-sm font-medium text-slate-300 mb-1">
@@ -402,7 +425,7 @@ export function ReviewModal({
                         />
                         <p className="text-xs text-emerald-500 mt-0.5">Recoverable via ITC (ON, NB, NS, NL, PE)</p>
                       </div>
-                      
+
                       {/* PST */}
                       <div>
                         <label className="flex items-center gap-2 text-sm font-medium text-slate-300 mb-1">
@@ -418,7 +441,7 @@ export function ReviewModal({
                         <p className="text-xs text-orange-400 mt-0.5">Not recoverable (BC, MB, SK, QC)</p>
                       </div>
                     </div>
-                    
+
                     {/* Total Tax Display */}
                     <div className="flex justify-between items-center p-2 rounded bg-slate-800/30">
                       <span className="text-sm text-slate-400">Total Tax:</span>

@@ -15,6 +15,9 @@ import {
   HelpCircle,
   ExternalLink,
   Trash2,
+  Landmark,
+  Camera,
+  Link2,
 } from "lucide-react";
 import Link from "next/link";
 import { expensesApi, cardsApi } from "@/lib/firebase-api";
@@ -58,6 +61,7 @@ export default function ExpensesPage() {
     verified_only?: boolean;
     quarter?: string;
     account?: string;
+    source?: string;
   }>({});
   const [selectedExpense, setSelectedExpense] = useState<any>(null);
   const pageSize = 20;
@@ -112,6 +116,21 @@ export default function ExpensesPage() {
       }
     }
 
+    if (filter.source) {
+      expenses = expenses.filter((e: any) => {
+        const hasReceipt = !!e.receipt_image_url;
+        const isBankImport = e.entry_type === "bank_import";
+        const isMatched = (hasReceipt && e.bank_linked) || (isBankImport && e.receipt_linked);
+        switch (filter.source) {
+          case "matched": return isMatched;
+          case "receipt_only": return hasReceipt && !e.bank_linked && !isBankImport;
+          case "bank_only": return isBankImport && !e.receipt_linked && !hasReceipt;
+          case "unmatched": return !isMatched;
+          default: return true;
+        }
+      });
+    }
+
     expenses.sort((a: any, b: any) => {
       const dateA = a.transaction_date ? new Date(a.transaction_date) : new Date(0);
       const dateB = b.transaction_date ? new Date(b.transaction_date) : new Date(0);
@@ -158,10 +177,18 @@ export default function ExpensesPage() {
     const pst = expenses.reduce((sum: number, e: any) => sum + (e.pst_amount || 0), 0);
     const verified = expenses.filter((e: any) => e.is_verified).length;
     const pending = expenses.filter((e: any) => !e.is_verified).length;
-    return { total, gst, hst, pst, taxTotal: gst + hst + pst, verified, pending, count: expenses.length };
+    const matched = expenses.filter((e: any) => {
+      const hasReceipt = !!e.receipt_image_url;
+      const isBankImport = e.entry_type === "bank_import";
+      return (hasReceipt && e.bank_linked) || (isBankImport && e.receipt_linked);
+    }).length;
+    const needsReceipt = expenses.filter((e: any) =>
+      e.entry_type === "bank_import" && !e.receipt_linked && !e.receipt_image_url
+    ).length;
+    return { total, gst, hst, pst, taxTotal: gst + hst + pst, verified, pending, count: expenses.length, matched, needsReceipt };
   }, [filteredData]);
 
-  const hasActiveFilters = filter.category || filter.verified_only !== undefined || filter.quarter || filter.account;
+  const hasActiveFilters = filter.category || filter.verified_only !== undefined || filter.quarter || filter.account || filter.source;
 
   const chipClass = (isActive: boolean) => cn(
     "text-sm rounded-full px-3 py-1.5 border transition-colors appearance-none cursor-pointer pr-7 bg-no-repeat bg-[right_8px_center] bg-[length:12px]",
@@ -187,7 +214,7 @@ export default function ExpensesPage() {
       </div>
 
       {/* Summary Bar — always visible */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         <div className="card p-3 md:p-4">
           <p className="text-xs text-slate-500 uppercase tracking-wider mb-1">Total</p>
           <p className="text-lg md:text-xl font-bold text-white">{formatCurrency(summaryStats.total)}</p>
@@ -206,6 +233,16 @@ export default function ExpensesPage() {
         <div className="card p-3 md:p-4">
           <p className="text-xs text-slate-500 uppercase tracking-wider mb-1">Pending</p>
           <p className="text-lg md:text-xl font-bold text-amber-400">{summaryStats.pending}</p>
+        </div>
+        <div className="card p-3 md:p-4">
+          <p className="text-xs text-slate-500 uppercase tracking-wider mb-1">Matched</p>
+          <p className="text-lg md:text-xl font-bold text-cyan-400">
+            <Link2 className="w-4 h-4 inline mr-1 -mt-0.5" />
+            {summaryStats.matched}
+          </p>
+          {summaryStats.needsReceipt > 0 && (
+            <p className="text-xs text-amber-400/80 mt-0.5">{summaryStats.needsReceipt} need receipts</p>
+          )}
         </div>
       </div>
 
@@ -315,6 +352,18 @@ export default function ExpensesPage() {
           <option value="">All Status</option>
           <option value="verified">Verified</option>
           <option value="pending">Pending Review</option>
+        </select>
+
+        <select
+          value={filter.source || ""}
+          onChange={(e) => updateFilter({ ...filter, source: e.target.value || undefined })}
+          className={chipClass(!!filter.source)}
+        >
+          <option value="">All Sources</option>
+          <option value="matched">🔗 Matched (Both)</option>
+          <option value="receipt_only">📷 Receipt Only</option>
+          <option value="bank_only">🏦 Bank Only</option>
+          <option value="unmatched">Unmatched</option>
         </select>
 
         {hasActiveFilters && (
@@ -439,6 +488,7 @@ function ExpenseRow({
   onDelete: () => void;
 }) {
   const color = categoryColors[expense.category] || "#6B7280";
+  const sourceInfo = getSourceInfo(expense);
 
   return (
     <tr className="hover:bg-slate-800/30 transition-colors">
@@ -456,9 +506,14 @@ function ExpenseRow({
               />
             </div>
           )}
-          <span className="text-sm text-white font-medium">
-            {expense.vendor_name || "Unknown Vendor"}
-          </span>
+          <div className="min-w-0">
+            <span className="text-sm text-white font-medium">
+              {expense.vendor_name || "Unknown Vendor"}
+            </span>
+            <div className="mt-0.5">
+              <SourceBadge info={sourceInfo} />
+            </div>
+          </div>
         </div>
       </td>
       <td className="px-6 py-4">
@@ -526,6 +581,7 @@ function ExpenseCard({
   onDelete: () => void;
 }) {
   const color = categoryColors[expense.category] || "#6B7280";
+  const sourceInfo = getSourceInfo(expense);
 
   return (
     <div
@@ -551,6 +607,9 @@ function ExpenseCard({
               <p className="text-xs text-slate-500">
                 {formatDate(expense.transaction_date)}
               </p>
+              <div className="mt-0.5">
+                <SourceBadge info={sourceInfo} />
+              </div>
             </div>
             <div className="text-right flex-shrink-0">
               <p className="text-sm font-semibold text-white">
@@ -592,4 +651,64 @@ function ExpenseCard({
       </div>
     </div>
   );
+}
+
+// ============ Source Matching Helpers ============
+
+function getSourceInfo(expense: any): { type: "matched" | "receipt_only" | "bank_only" | "manual"; score?: number; reason?: string } {
+  const hasReceipt = !!expense.receipt_image_url;
+  const isBankImport = expense.entry_type === "bank_import";
+
+  // Matched: receipt expense linked to bank, or bank expense linked to receipt
+  if ((hasReceipt && expense.bank_linked) || (isBankImport && expense.receipt_linked)) {
+    return {
+      type: "matched",
+      score: expense.bank_match_score,
+      reason: expense.bank_match_reason,
+    };
+  }
+
+  // Bank import only (no receipt attached)
+  if (isBankImport && !hasReceipt) {
+    return { type: "bank_only" };
+  }
+
+  // Receipt/OCR only (not linked to bank)
+  if (hasReceipt && !expense.bank_linked) {
+    return { type: "receipt_only" };
+  }
+
+  // Manual entry or other
+  return { type: "manual" };
+}
+
+function SourceBadge({ info }: { info: ReturnType<typeof getSourceInfo> }) {
+  switch (info.type) {
+    case "matched":
+      return (
+        <span
+          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-cyan-500/15 text-cyan-400 border border-cyan-500/20"
+          title={info.reason ? `Match: ${info.reason} (score: ${info.score})` : "Matched"}
+        >
+          <Link2 className="w-3 h-3" />
+          Matched
+        </span>
+      );
+    case "bank_only":
+      return (
+        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/15 text-amber-400/80 border border-amber-500/20">
+          <Landmark className="w-3 h-3" />
+          Bank only
+        </span>
+      );
+    case "receipt_only":
+      return (
+        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-500/15 text-slate-400 border border-slate-500/20">
+          <Camera className="w-3 h-3" />
+          Receipt
+        </span>
+      );
+    default:
+      return null;
+  }
 }

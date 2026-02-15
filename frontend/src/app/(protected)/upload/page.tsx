@@ -18,6 +18,7 @@ import {
   PenLine,
   AlertTriangle,
   ChevronDown,
+  Link2,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { useQueryClient } from "@tanstack/react-query";
@@ -545,15 +546,13 @@ export default function UploadPage() {
                   </div>
 
                   {/* Bank Match Banner */}
-                  {processedExpense.receipt_linked && (
-                    <div className="p-3 rounded-xl bg-blue-500/10 border border-blue-500/20 text-left max-w-sm mx-auto">
+                  {(processedExpense.receipt_linked || processedExpense.bank_linked) && (
+                    <div className="p-3 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-left max-w-sm mx-auto">
                       <div className="flex items-start gap-2">
-                        <svg className="w-5 h-5 text-blue-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-                        </svg>
+                        <Link2 className="w-5 h-5 text-cyan-400 flex-shrink-0 mt-0.5" />
                         <div>
-                          <p className="text-blue-300 text-sm font-medium">Linked to bank transaction</p>
-                          <p className="text-blue-400/70 text-xs mt-0.5">
+                          <p className="text-cyan-300 text-sm font-medium">Matched with bank transaction ✅</p>
+                          <p className="text-cyan-400/70 text-xs mt-0.5">
                             Receipt matched to existing bank import. Tax details added.
                           </p>
                         </div>
