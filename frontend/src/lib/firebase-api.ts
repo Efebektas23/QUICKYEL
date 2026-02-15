@@ -291,6 +291,21 @@ export const expensesApi = {
       await storageApi.deleteReceipt(expense.receipt_image_url);
     }
     
+    // Clean up any receipt hashes associated with this expense
+    // so the same receipt can be re-uploaded later
+    try {
+      const hashQuery = query(
+        collection(db, IMPORT_HASHES_COLLECTION),
+        where("expense_id", "==", id)
+      );
+      const hashSnaps = await getDocs(hashQuery);
+      for (const hashDoc of hashSnaps.docs) {
+        await deleteDoc(hashDoc.ref);
+      }
+    } catch (err) {
+      console.warn("Could not clean up receipt hashes:", err);
+    }
+    
     const docRef = doc(db, EXPENSES_COLLECTION, id);
     await deleteDoc(docRef);
   },
@@ -307,9 +322,24 @@ export const expensesApi = {
     const primaryFileHash = await computeReceiptHash(files[0]);
     const hashDocSnap = await getDoc(doc(db, IMPORT_HASHES_COLLECTION, primaryFileHash));
     if (hashDocSnap.exists()) {
-      throw new Error(
-        "DUPLICATE_RECEIPT: This exact receipt image has already been uploaded. Please check your expenses list."
-      );
+      // Verify the referenced expense still exists (it may have been deleted)
+      const hashData = hashDocSnap.data();
+      if (hashData?.expense_id) {
+        const expenseDoc = await getDoc(doc(db, EXPENSES_COLLECTION, hashData.expense_id));
+        if (!expenseDoc.exists()) {
+          // Expense was deleted - clean up the orphaned hash and allow re-upload
+          console.log("🧹 Cleaning up orphaned receipt hash (expense was deleted)");
+          await deleteDoc(doc(db, IMPORT_HASHES_COLLECTION, primaryFileHash));
+        } else {
+          throw new Error(
+            "DUPLICATE_RECEIPT: This exact receipt image has already been uploaded. Please check your expenses list."
+          );
+        }
+      } else {
+        throw new Error(
+          "DUPLICATE_RECEIPT: This exact receipt image has already been uploaded. Please check your expenses list."
+        );
+      }
     }
     
     // 1. Upload all images to Firebase Storage
