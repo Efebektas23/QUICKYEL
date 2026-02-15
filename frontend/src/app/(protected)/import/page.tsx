@@ -81,32 +81,33 @@ export default function ImportPage() {
   };
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-4 md:space-y-8">
       {/* Page Header */}
-      <div className="flex items-start justify-between">
+      <div className="flex items-start justify-between gap-2">
         <div>
-          <h1 className="text-3xl font-display font-bold text-white">
+          <h1 className="text-2xl md:text-3xl font-display font-bold text-white">
             Import Data
           </h1>
-          <p className="text-slate-400 mt-1">
-            Import bank statements and factoring reports automatically
+          <p className="text-slate-400 text-sm mt-0.5">
+            Import bank statements and factoring reports
           </p>
         </div>
         <button
           onClick={handleCleanup}
           disabled={isCleaningUp}
-          className="text-xs px-3 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-lg border border-red-500/30 transition-all flex items-center gap-1.5"
+          className="text-xs px-2.5 md:px-3 py-1.5 md:py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-lg border border-red-500/30 transition-all flex items-center gap-1.5 flex-shrink-0"
           title="Remove misclassified transfers, owner draws, and credit card payments from expenses/revenue"
         >
           {isCleaningUp ? (
             <>
               <Loader2 className="w-3 h-3 animate-spin" />
-              Cleaning...
+              <span className="hidden sm:inline">Cleaning...</span>
             </>
           ) : (
             <>
               <XCircle className="w-3 h-3" />
-              Clean Up Bad Data
+              <span className="hidden sm:inline">Clean Up Bad Data</span>
+              <span className="sm:hidden">Clean Up</span>
             </>
           )}
         </button>
@@ -137,7 +138,7 @@ export default function ImportPage() {
         <button
           onClick={() => setActiveTab("bank")}
           className={cn(
-            "flex-1 flex items-center gap-3 p-4 rounded-xl border-2 transition-all",
+            "flex-1 flex items-center gap-2 md:gap-3 p-3 md:p-4 rounded-xl border-2 transition-all",
             activeTab === "bank"
               ? "border-amber-500/50 bg-amber-500/5"
               : "border-slate-700 hover:border-slate-600 bg-slate-900/50"
@@ -145,17 +146,17 @@ export default function ImportPage() {
         >
           <div
             className={cn(
-              "w-12 h-12 rounded-xl flex items-center justify-center",
+              "w-10 h-10 md:w-12 md:h-12 rounded-xl flex items-center justify-center flex-shrink-0",
               activeTab === "bank"
                 ? "bg-amber-500/20 text-amber-500"
                 : "bg-slate-800 text-slate-400"
             )}
           >
-            <Building2 className="w-6 h-6" />
+            <Building2 className="w-5 h-5 md:w-6 md:h-6" />
           </div>
-          <div className="text-left">
-            <h3 className="font-semibold text-white">Bank Statement</h3>
-            <p className="text-xs text-slate-400">
+          <div className="text-left min-w-0">
+            <h3 className="text-sm md:text-base font-semibold text-white">Bank Statement</h3>
+            <p className="text-xs text-slate-400 hidden sm:block">
               Import RBC CSV transactions
             </p>
           </div>
@@ -164,7 +165,7 @@ export default function ImportPage() {
         <button
           onClick={() => setActiveTab("factoring")}
           className={cn(
-            "flex-1 flex items-center gap-3 p-4 rounded-xl border-2 transition-all",
+            "flex-1 flex items-center gap-2 md:gap-3 p-3 md:p-4 rounded-xl border-2 transition-all",
             activeTab === "factoring"
               ? "border-amber-500/50 bg-amber-500/5"
               : "border-slate-700 hover:border-slate-600 bg-slate-900/50"
@@ -172,17 +173,17 @@ export default function ImportPage() {
         >
           <div
             className={cn(
-              "w-12 h-12 rounded-xl flex items-center justify-center",
+              "w-10 h-10 md:w-12 md:h-12 rounded-xl flex items-center justify-center flex-shrink-0",
               activeTab === "factoring"
                 ? "bg-amber-500/20 text-amber-500"
                 : "bg-slate-800 text-slate-400"
             )}
           >
-            <Percent className="w-6 h-6" />
+            <Percent className="w-5 h-5 md:w-6 md:h-6" />
           </div>
-          <div className="text-left">
-            <h3 className="font-semibold text-white">Factoring Reports</h3>
-            <p className="text-xs text-slate-400">
+          <div className="text-left min-w-0">
+            <h3 className="text-sm md:text-base font-semibold text-white">Factoring Reports</h3>
+            <p className="text-xs text-slate-400 hidden sm:block">
               Import J D Factors PDF reports
             </p>
           </div>
@@ -539,7 +540,7 @@ function BankImportSection() {
       setTransactions(withSelection);
       setSummary(result.summary);
       setStep("review");
-      
+
       const matchCount = expenseMatches.size;
       toast.success(
         `Found ${result.summary.total_transactions} transactions${matchCount > 0 ? ` (${matchCount} matched to existing)` : ""}`,
@@ -997,32 +998,31 @@ function BankImportSection() {
                         tx.type === "expense"
                           ? "bg-red-500/10 text-red-400"
                           : tx.type === "income"
-                          ? "bg-emerald-500/10 text-emerald-400"
-                          : tx.type === "transfer"
-                          ? "bg-blue-500/10 text-blue-400"
-                          : tx.type === "tax_refund"
-                          ? "bg-cyan-500/10 text-cyan-400"
-                          : "bg-orange-500/10 text-orange-400"
+                            ? "bg-emerald-500/10 text-emerald-400"
+                            : tx.type === "transfer"
+                              ? "bg-blue-500/10 text-blue-400"
+                              : tx.type === "tax_refund"
+                                ? "bg-cyan-500/10 text-cyan-400"
+                                : "bg-orange-500/10 text-orange-400"
                       )}
                     >
                       {tx.type === "expense"
                         ? "Expense"
                         : tx.type === "income"
-                        ? "Income"
-                        : tx.type === "transfer"
-                        ? "Transfer"
-                        : tx.type === "tax_refund"
-                        ? "Tax Refund"
-                        : "Owner Draw"}
+                          ? "Income"
+                          : tx.type === "transfer"
+                            ? "Transfer"
+                            : tx.type === "tax_refund"
+                              ? "Tax Refund"
+                              : "Owner Draw"}
                     </span>
                   </td>
                   <td className="p-3">
                     <span
                       className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs"
                       style={{
-                        backgroundColor: `${
-                          categoryColors[tx.category] || "#6B7280"
-                        }15`,
+                        backgroundColor: `${categoryColors[tx.category] || "#6B7280"
+                          }15`,
                         color: categoryColors[tx.category] || "#6B7280",
                       }}
                     >
@@ -1174,8 +1174,8 @@ function FactoringImportSection() {
           const rateDate = reportData.date_range?.start
             ? new Date(reportData.date_range.start)
             : selected[0]?.date
-            ? new Date(selected[0].date)
-            : new Date();
+              ? new Date(selected[0].date)
+              : new Date();
           exchangeRate = await revenueApi.fetchExchangeRate(rateDate);
         } catch {
           exchangeRate = 1.40; // Fallback if BoC API fails
@@ -1549,12 +1549,12 @@ function FactoringImportSection() {
                         entry.type === "fee"
                           ? "bg-red-500/10 text-red-400"
                           : entry.type === "purchase"
-                          ? "bg-blue-500/10 text-blue-400"
-                          : entry.type === "collection"
-                          ? "bg-emerald-500/10 text-emerald-400"
-                          : entry.type === "recourse"
-                          ? "bg-orange-500/10 text-orange-400"
-                          : "bg-purple-500/10 text-purple-400"
+                            ? "bg-blue-500/10 text-blue-400"
+                            : entry.type === "collection"
+                              ? "bg-emerald-500/10 text-emerald-400"
+                              : entry.type === "recourse"
+                                ? "bg-orange-500/10 text-orange-400"
+                                : "bg-purple-500/10 text-purple-400"
                       )}
                     >
                       {entry.type.replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase())}

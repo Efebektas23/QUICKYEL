@@ -55,12 +55,12 @@ export default function RevenuePage() {
   };
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-4 md:space-y-8">
       {/* Page Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h1 className="text-3xl font-display font-bold text-white">Revenue</h1>
-          <p className="text-slate-400 mt-1">Track your business income</p>
+          <h1 className="text-2xl md:text-3xl font-display font-bold text-white">Revenue</h1>
+          <p className="text-slate-400 text-sm mt-0.5">Track your business income</p>
         </div>
         <button onClick={() => setShowAddModal(true)} className="btn-primary">
           <Plus className="w-5 h-5" />
@@ -69,16 +69,16 @@ export default function RevenuePage() {
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
         <SummaryCard
-          title="Gross Revenue (CAD)"
+          title="Revenue (CAD)"
           value={formatCurrency(summary?.total_cad || 0)}
           icon={<TrendingUp className="w-5 h-5" />}
           color="green"
           loading={!summary}
         />
         <SummaryCard
-          title="Gross Revenue (USD)"
+          title="Revenue (USD)"
           value={formatCurrency(summary?.total_usd || 0, "USD")}
           icon={<DollarSign className="w-5 h-5" />}
           color="blue"
@@ -94,9 +94,9 @@ export default function RevenuePage() {
       </div>
 
       {/* Revenue List */}
-      <div className="card p-6">
+      <div className="card p-4 md:p-6">
         <h2 className="text-lg font-semibold text-white mb-4">Income Entries</h2>
-        
+
         {isLoading ? (
           <div className="space-y-3">
             {[...Array(3)].map((_, i) => (
@@ -205,15 +205,112 @@ function RevenueItem({
     <motion.div
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
-      className="flex items-center justify-between p-4 rounded-xl bg-slate-800/50 hover:bg-slate-800 transition-colors group"
+      className="p-3 md:p-4 rounded-xl bg-slate-800/50 hover:bg-slate-800 transition-colors group"
     >
-      <div className="flex items-center gap-4">
-        <div className="w-12 h-12 rounded-xl bg-emerald-500/10 flex items-center justify-center">
-          <Building2 className="w-6 h-6 text-emerald-500" />
+      {/* Desktop: horizontal layout */}
+      <div className="hidden md:flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 rounded-xl bg-emerald-500/10 flex items-center justify-center">
+            <Building2 className="w-6 h-6 text-emerald-500" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <p className="font-medium text-white">{revenue.broker_name}</p>
+              <span className={cn(
+                "px-2 py-0.5 rounded-full text-xs font-medium",
+                currency === "CAD" ? "bg-emerald-500/10 text-emerald-500" : "bg-blue-500/10 text-blue-500"
+              )}>
+                {currency}
+              </span>
+              {revenue.status === "verified" ? (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-500 text-xs">
+                  <CheckCircle className="w-3 h-3" />
+                  Verified
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-500 text-xs">
+                  <Clock className="w-3 h-3" />
+                  Pending
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-3 text-sm text-slate-500 mt-1">
+              <span className="flex items-center gap-1">
+                <Calendar className="w-4 h-4" />
+                {formatDate(revenue.date)}
+              </span>
+              {revenue.load_id && (
+                <span className="flex items-center gap-1">
+                  <Truck className="w-4 h-4" />
+                  {revenue.load_id}
+                </span>
+              )}
+              {showConversion && (
+                <span className="flex items-center gap-1">
+                  <RefreshCw className="w-4 h-4" />
+                  {revenue.exchange_rate.toFixed(4)}
+                </span>
+              )}
+            </div>
+          </div>
         </div>
-        <div>
-          <div className="flex items-center gap-2">
-            <p className="font-medium text-white">{revenue.broker_name}</p>
+        <div className="flex items-center gap-4">
+          <div className="text-right">
+            <p className="text-lg font-bold text-emerald-500">
+              {formatCurrency(revenue.amount_cad)}
+            </p>
+            {showConversion && (
+              <p className="text-sm text-slate-500">
+                {formatCurrency(originalAmount, "USD")}
+              </p>
+            )}
+          </div>
+          <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+            {revenue.image_url && (
+              <a
+                href={revenue.image_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="p-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors"
+              >
+                <ExternalLink className="w-4 h-4" />
+              </a>
+            )}
+            <button
+              onClick={onDelete}
+              className="p-2 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition-colors"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Mobile: stacked layout */}
+      <div className="md:hidden">
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-lg bg-emerald-500/10 flex items-center justify-center flex-shrink-0">
+              <Building2 className="w-5 h-5 text-emerald-500" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-white truncate">{revenue.broker_name}</p>
+              <p className="text-xs text-slate-500">{formatDate(revenue.date)}</p>
+            </div>
+          </div>
+          <div className="text-right flex-shrink-0">
+            <p className="text-sm font-bold text-emerald-500">
+              {formatCurrency(revenue.amount_cad)}
+            </p>
+            {showConversion && (
+              <p className="text-xs text-slate-500">
+                {formatCurrency(originalAmount, "USD")}
+              </p>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center justify-between mt-2">
+          <div className="flex items-center gap-1.5">
             <span className={cn(
               "px-2 py-0.5 rounded-full text-xs font-medium",
               currency === "CAD" ? "bg-emerald-500/10 text-emerald-500" : "bg-blue-500/10 text-blue-500"
@@ -221,65 +318,35 @@ function RevenueItem({
               {currency}
             </span>
             {revenue.status === "verified" ? (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-500 text-xs">
-                <CheckCircle className="w-3 h-3" />
-                Verified
-              </span>
+              <CheckCircle className="w-4 h-4 text-emerald-500" />
             ) : (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-500 text-xs">
-                <Clock className="w-3 h-3" />
-                Pending
-              </span>
+              <Clock className="w-4 h-4 text-amber-500" />
             )}
-          </div>
-          <div className="flex items-center gap-3 text-sm text-slate-500 mt-1">
-            <span className="flex items-center gap-1">
-              <Calendar className="w-4 h-4" />
-              {formatDate(revenue.date)}
-            </span>
             {revenue.load_id && (
-              <span className="flex items-center gap-1">
-                <Truck className="w-4 h-4" />
+              <span className="text-xs text-slate-500 flex items-center gap-0.5">
+                <Truck className="w-3 h-3" />
                 {revenue.load_id}
               </span>
             )}
-            {showConversion && (
-              <span className="flex items-center gap-1">
-                <RefreshCw className="w-4 h-4" />
-                {revenue.exchange_rate.toFixed(4)}
-              </span>
-            )}
           </div>
-        </div>
-      </div>
-      <div className="flex items-center gap-4">
-        <div className="text-right">
-          <p className="text-lg font-bold text-emerald-500">
-            {formatCurrency(revenue.amount_cad)}
-          </p>
-          {showConversion && (
-            <p className="text-sm text-slate-500">
-              {formatCurrency(originalAmount, "USD")}
-            </p>
-          )}
-        </div>
-        <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-          {revenue.image_url && (
-            <a
-              href={revenue.image_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="p-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors"
+          <div className="flex items-center gap-1">
+            {revenue.image_url && (
+              <a
+                href={revenue.image_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="p-1.5 text-slate-400 hover:text-white min-w-[32px] min-h-[32px] flex items-center justify-center"
+              >
+                <ExternalLink className="w-4 h-4" />
+              </a>
+            )}
+            <button
+              onClick={onDelete}
+              className="p-1.5 text-slate-400 hover:text-red-500 min-w-[32px] min-h-[32px] flex items-center justify-center"
             >
-              <ExternalLink className="w-4 h-4" />
-            </a>
-          )}
-          <button
-            onClick={onDelete}
-            className="p-2 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition-colors"
-          >
-            <Trash2 className="w-4 h-4" />
-          </button>
+              <Trash2 className="w-4 h-4" />
+            </button>
+          </div>
         </div>
       </div>
     </motion.div>
@@ -300,7 +367,7 @@ function AddRevenueModal({
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [uploadedImageUrl, setUploadedImageUrl] = useState<string | null>(null);
-  
+
   const [formData, setFormData] = useState({
     broker_name: "",
     load_id: "",
@@ -314,7 +381,7 @@ function AddRevenueModal({
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
     if (!selectedFile) return;
-    
+
     setFile(selectedFile);
     setPreviewUrl(URL.createObjectURL(selectedFile));
   };
@@ -328,7 +395,7 @@ function AddRevenueModal({
     setIsProcessing(true);
     console.log("📄 Starting Rate Confirmation processing...");
     console.log("📄 File:", file.name, file.type, file.size, "bytes");
-    
+
     try {
       // Upload document
       toast.loading("Uploading document...", { id: "process" });
@@ -336,17 +403,17 @@ function AddRevenueModal({
       const imageUrl = await revenueApi.uploadDocument(file);
       console.log("✅ Upload successful:", imageUrl);
       setUploadedImageUrl(imageUrl);
-      
+
       // Process with AI
       toast.loading("AI is reading the document...", { id: "process" });
       console.log("🤖 Sending to backend for OCR + AI processing...");
       const result = await revenueApi.processRateConfirmation(imageUrl);
       console.log("✅ AI processing result:", result);
-      
+
       // Fetch exchange rate FIRST if USD - using the Rate Confirmation date
       let exchangeRate = "1.0";
       const parsedDate = result.date || new Date().toISOString().split("T")[0];
-      
+
       if (result.currency === "USD" && result.date) {
         console.log(`💱 Currency: USD - Need to convert to CAD`);
         console.log(`💱 Rate Confirmation Date: ${result.date}`);
@@ -393,7 +460,7 @@ function AddRevenueModal({
   const handleDateChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const newDate = e.target.value;
     setFormData({ ...formData, date: newDate });
-    
+
     // Only fetch rate if currency is USD
     if (formData.currency === "USD") {
       setIsFetchingRate(true);
@@ -410,7 +477,7 @@ function AddRevenueModal({
 
   const handleCurrencyChange = async (newCurrency: "USD" | "CAD") => {
     setFormData(prev => ({ ...prev, currency: newCurrency }));
-    
+
     if (newCurrency === "CAD") {
       setFormData(prev => ({ ...prev, exchange_rate: "1.0" }));
     } else if (formData.date) {
@@ -428,7 +495,7 @@ function AddRevenueModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!formData.broker_name || !formData.amount) {
       toast.error("Please fill in all required fields");
       return;
@@ -438,8 +505,8 @@ function AddRevenueModal({
     try {
       const amountOriginal = parseFloat(formData.amount);
       const exchangeRate = parseFloat(formData.exchange_rate);
-      const amountCad = formData.currency === "CAD" 
-        ? amountOriginal 
+      const amountCad = formData.currency === "CAD"
+        ? amountOriginal
         : amountOriginal * exchangeRate;
 
       console.log("💾 SAVING REVENUE:");
@@ -461,7 +528,7 @@ function AddRevenueModal({
         status: "verified" as const,
         notes: formData.notes || null,
       };
-      
+
       console.log("💾 Revenue data to save:", revenueData);
 
       await revenueApi.create(revenueData);
@@ -557,7 +624,7 @@ function AddRevenueModal({
             {/* AI Info */}
             <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/20">
               <p className="text-sm text-amber-400">
-                <strong>AI-Powered:</strong> Our system will automatically extract broker name, 
+                <strong>AI-Powered:</strong> Our system will automatically extract broker name,
                 load ID, amount, and detect currency (USD vs CAD).
               </p>
             </div>
