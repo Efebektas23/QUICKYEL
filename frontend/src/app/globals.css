@@ -36,12 +36,12 @@
 
   /* Custom scrollbar */
   ::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
+    width: 6px;
+    height: 6px;
   }
 
   ::-webkit-scrollbar-track {
-    background-color: #0f172a;
+    background-color: transparent;
   }
 
   ::-webkit-scrollbar-thumb {
@@ -60,8 +60,8 @@
            bg-gradient-to-r from-amber-500 to-amber-600 
            text-slate-950 font-semibold rounded-xl
            shadow-lg shadow-amber-500/25
-           hover:shadow-amber-500/40 hover:scale-105
-           active:scale-95
+           hover:shadow-amber-500/40 hover:scale-[1.02]
+           active:scale-[0.98]
            transition-all duration-200 ease-out
            disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100;
   }
@@ -71,7 +71,7 @@
            bg-slate-800 text-white font-medium rounded-xl
            border border-slate-700
            hover:bg-slate-700 hover:border-slate-600
-           active:scale-95
+           active:scale-[0.98]
            transition-all duration-200 ease-out
            disabled:opacity-50 disabled:cursor-not-allowed;
   }
@@ -80,7 +80,7 @@
     @apply inline-flex items-center justify-center gap-2 px-4 py-2
            text-slate-300 font-medium rounded-lg
            hover:bg-slate-800 hover:text-white
-           active:scale-95
+           active:scale-[0.98]
            transition-all duration-200 ease-out;
   }
 
@@ -136,6 +136,43 @@
     @apply bg-gradient-to-r from-amber-400 via-amber-500 to-orange-500 
            bg-clip-text text-transparent;
   }
+
+  /* Filter chip component */
+  .filter-chip {
+    @apply inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full
+           text-xs font-medium border transition-all duration-200
+           cursor-pointer select-none;
+  }
+
+  .filter-chip-active {
+    @apply border-amber-500/50 bg-amber-500/10 text-amber-400;
+  }
+
+  .filter-chip-inactive {
+    @apply border-slate-700 bg-slate-800/50 text-slate-400
+           hover:border-slate-600 hover:text-slate-300;
+  }
+
+  /* Summary stat bar */
+  .summary-bar {
+    @apply flex items-center gap-6 px-5 py-3 rounded-xl
+           bg-slate-800/40 border border-slate-800/50;
+  }
+
+  /* Stat card with accent */
+  .stat-card {
+    @apply card p-5 relative overflow-hidden;
+  }
+
+  .stat-card::after {
+    content: "";
+    @apply absolute bottom-0 left-0 right-0 h-1 bg-gradient-to-r from-amber-500/50 to-transparent;
+  }
+
+  /* Mobile-optimized card */
+  .mobile-card {
+    @apply card p-4 md:p-5 active:scale-[0.99] transition-transform duration-100;
+  }
 }
 
 @layer utilities {
@@ -149,6 +186,11 @@
 
   .safe-top {
     padding-top: env(safe-area-inset-top);
+  }
+
+  /* Touch target minimum */
+  .touch-target {
+    @apply min-w-[48px] min-h-[48px];
   }
 }
 
@@ -168,5 +210,23 @@ input[type="number"] {
   body {
     -webkit-user-select: none;
     user-select: none;
+  }
+}
+
+/* Print-friendly styles */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+
+  body {
+    background: white !important;
+    color: black !important;
+  }
+
+  .card {
+    background: white !important;
+    border: 1px solid #e2e8f0 !important;
+    box-shadow: none !important;
   }
 }

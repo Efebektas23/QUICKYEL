@@ -50,13 +50,13 @@ export default function ExportPage() {
   };
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6 md:space-y-8">
       {/* Page Header */}
       <div>
-        <h1 className="text-3xl font-display font-bold text-white">
+        <h1 className="text-2xl md:text-3xl font-display font-bold text-white">
           Export Data
         </h1>
-        <p className="text-slate-400 mt-1">
+        <p className="text-slate-400 text-sm mt-0.5">
           Generate reports for your accountant
         </p>
       </div>
@@ -140,35 +140,71 @@ export default function ExportPage() {
       </div>
 
       {/* Tax Breakdown Cards */}
-      <div className="card p-6">
+      <div className="card p-4 md:p-6">
         <h2 className="text-lg font-semibold text-white mb-4">
           Tax Breakdown (GST / HST / PST)
         </h2>
-        <div className="grid sm:grid-cols-4 gap-4">
-          <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
-            <p className="text-sm text-emerald-400 mb-1">GST (5%)</p>
-            <p className="text-xl font-bold text-emerald-400">
+        {/* Visual Tax Proportion Bar */}
+        {!isLoading && (summary?.totals?.total_tax || 0) > 0 && (
+          <div className="mb-4">
+            <div className="h-3 rounded-full overflow-hidden flex bg-slate-800">
+              {(summary?.totals?.total_gst || 0) > 0 && (
+                <div
+                  className="h-full bg-emerald-500 transition-all duration-500"
+                  style={{ width: `${((summary?.totals?.total_gst || 0) / (summary?.totals?.total_tax || 1)) * 100}%` }}
+                />
+              )}
+              {(summary?.totals?.total_hst || 0) > 0 && (
+                <div
+                  className="h-full bg-blue-500 transition-all duration-500"
+                  style={{ width: `${((summary?.totals?.total_hst || 0) / (summary?.totals?.total_tax || 1)) * 100}%` }}
+                />
+              )}
+              {(summary?.totals?.total_pst || 0) > 0 && (
+                <div
+                  className="h-full bg-orange-500 transition-all duration-500"
+                  style={{ width: `${((summary?.totals?.total_pst || 0) / (summary?.totals?.total_tax || 1)) * 100}%` }}
+                />
+              )}
+            </div>
+            <div className="flex items-center gap-4 mt-2">
+              <span className="flex items-center gap-1.5 text-xs text-slate-400">
+                <span className="w-2 h-2 rounded-full bg-emerald-500" />GST
+              </span>
+              <span className="flex items-center gap-1.5 text-xs text-slate-400">
+                <span className="w-2 h-2 rounded-full bg-blue-500" />HST
+              </span>
+              <span className="flex items-center gap-1.5 text-xs text-slate-400">
+                <span className="w-2 h-2 rounded-full bg-orange-500" />PST
+              </span>
+            </div>
+          </div>
+        )}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="p-3 md:p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
+            <p className="text-xs md:text-sm text-emerald-400 mb-1">GST (5%)</p>
+            <p className="text-lg md:text-xl font-bold text-emerald-400">
               {formatCurrency(summary?.totals?.total_gst)}
             </p>
             <p className="text-xs text-emerald-500/70 mt-1">ITC Recoverable</p>
           </div>
-          <div className="p-4 rounded-xl bg-blue-500/10 border border-blue-500/20">
-            <p className="text-sm text-blue-400 mb-1">HST (13-15%)</p>
-            <p className="text-xl font-bold text-blue-400">
+          <div className="p-3 md:p-4 rounded-xl bg-blue-500/10 border border-blue-500/20">
+            <p className="text-xs md:text-sm text-blue-400 mb-1">HST (13-15%)</p>
+            <p className="text-lg md:text-xl font-bold text-blue-400">
               {formatCurrency(summary?.totals?.total_hst)}
             </p>
             <p className="text-xs text-blue-500/70 mt-1">ITC Recoverable</p>
           </div>
-          <div className="p-4 rounded-xl bg-orange-500/10 border border-orange-500/20">
-            <p className="text-sm text-orange-400 mb-1">PST (6-10%)</p>
-            <p className="text-xl font-bold text-orange-400">
+          <div className="p-3 md:p-4 rounded-xl bg-orange-500/10 border border-orange-500/20">
+            <p className="text-xs md:text-sm text-orange-400 mb-1">PST (6-10%)</p>
+            <p className="text-lg md:text-xl font-bold text-orange-400">
               {formatCurrency(summary?.totals?.total_pst)}
             </p>
             <p className="text-xs text-orange-500/70 mt-1">NOT Recoverable</p>
           </div>
-          <div className="p-4 rounded-xl bg-slate-800/50">
-            <p className="text-sm text-slate-400 mb-1">Total All Taxes</p>
-            <p className="text-xl font-bold text-white">
+          <div className="p-3 md:p-4 rounded-xl bg-slate-800/50">
+            <p className="text-xs md:text-sm text-slate-400 mb-1">Total All Taxes</p>
+            <p className="text-lg md:text-xl font-bold text-white">
               {formatCurrency(summary?.totals?.total_tax)}
             </p>
             <p className="text-xs text-slate-500 mt-1">GST + HST + PST</p>
@@ -177,7 +213,7 @@ export default function ExportPage() {
       </div>
 
       {/* Category Breakdown with Separate Tax Columns */}
-      <div className="card p-6">
+      <div className="card p-4 md:p-6">
         <h2 className="text-lg font-semibold text-white mb-4">
           Breakdown by Category
         </h2>
@@ -188,88 +224,128 @@ export default function ExportPage() {
             ))}
           </div>
         ) : summary?.by_category ? (
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="text-left text-sm text-slate-400 border-b border-slate-800">
-                  <th className="pb-3 font-medium">Category</th>
-                  <th className="pb-3 font-medium text-right">Count</th>
-                  <th className="pb-3 font-medium text-right">Total CAD</th>
-                  <th className="pb-3 font-medium text-right text-emerald-400">GST</th>
-                  <th className="pb-3 font-medium text-right text-blue-400">HST</th>
-                  <th className="pb-3 font-medium text-right text-orange-400">PST</th>
-                  <th className="pb-3 font-medium text-right">Total Tax</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800">
-                {Object.entries(summary.by_category).map(
-                  ([category, data]: [string, any]) => (
-                    <tr key={category}>
-                      <td className="py-3">
-                        <div className="flex items-center gap-2">
-                          <span
-                            className="w-3 h-3 rounded-full"
-                            style={{
-                              backgroundColor: categoryColors[category] || "#6B7280",
-                            }}
-                          />
-                          <span className="text-white">
-                            {categoryLabels[category] || category}
-                          </span>
-                          {category === "meals_entertainment" && (
-                            <span className="text-xs text-orange-400">
-                              (50% deductible)
+          <>
+            {/* Desktop Table */}
+            <div className="hidden md:block overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="text-left text-sm text-slate-400 border-b border-slate-800">
+                    <th className="pb-3 font-medium">Category</th>
+                    <th className="pb-3 font-medium text-right">Count</th>
+                    <th className="pb-3 font-medium text-right">Total CAD</th>
+                    <th className="pb-3 font-medium text-right text-emerald-400">GST</th>
+                    <th className="pb-3 font-medium text-right text-blue-400">HST</th>
+                    <th className="pb-3 font-medium text-right text-orange-400">PST</th>
+                    <th className="pb-3 font-medium text-right">Total Tax</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800">
+                  {Object.entries(summary.by_category).map(
+                    ([category, data]: [string, any]) => (
+                      <tr key={category}>
+                        <td className="py-3">
+                          <div className="flex items-center gap-2">
+                            <span
+                              className="w-3 h-3 rounded-full"
+                              style={{
+                                backgroundColor: categoryColors[category] || "#6B7280",
+                              }}
+                            />
+                            <span className="text-white">
+                              {categoryLabels[category] || category}
                             </span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="py-3 text-right text-slate-300">
-                        {data.count}
-                      </td>
-                      <td className="py-3 text-right text-white font-medium">
+                            {category === "meals_entertainment" && (
+                              <span className="text-xs text-orange-400">
+                                (50% deductible)
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="py-3 text-right text-slate-300">
+                          {data.count}
+                        </td>
+                        <td className="py-3 text-right text-white font-medium">
+                          {formatCurrency(data.total_cad)}
+                        </td>
+                        <td className="py-3 text-right text-emerald-400">
+                          {formatCurrency(data.total_gst)}
+                        </td>
+                        <td className="py-3 text-right text-blue-400">
+                          {formatCurrency(data.total_hst)}
+                        </td>
+                        <td className="py-3 text-right text-orange-400">
+                          {formatCurrency(data.total_pst)}
+                        </td>
+                        <td className="py-3 text-right text-slate-300">
+                          {formatCurrency(data.total_tax)}
+                        </td>
+                      </tr>
+                    )
+                  )}
+                </tbody>
+                <tfoot>
+                  <tr className="border-t-2 border-slate-700 font-semibold">
+                    <td className="pt-4 text-white">Total</td>
+                    <td className="pt-4 text-right text-white">
+                      {summary.totals.expense_count}
+                    </td>
+                    <td className="pt-4 text-right text-yel-500">
+                      {formatCurrency(summary.totals.total_cad)}
+                    </td>
+                    <td className="pt-4 text-right text-emerald-500">
+                      {formatCurrency(summary.totals.total_gst)}
+                    </td>
+                    <td className="pt-4 text-right text-blue-500">
+                      {formatCurrency(summary.totals.total_hst)}
+                    </td>
+                    <td className="pt-4 text-right text-orange-500">
+                      {formatCurrency(summary.totals.total_pst)}
+                    </td>
+                    <td className="pt-4 text-right text-white">
+                      {formatCurrency(summary.totals.total_tax)}
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+
+            {/* Mobile Category Cards */}
+            <div className="md:hidden space-y-3">
+              {Object.entries(summary.by_category)
+                .sort(([, a]: [string, any], [, b]: [string, any]) => b.total_cad - a.total_cad)
+                .map(([category, data]: [string, any]) => (
+                  <div key={category} className="p-3 rounded-xl bg-slate-800/50">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className="w-3 h-3 rounded-full"
+                          style={{ backgroundColor: categoryColors[category] || "#6B7280" }}
+                        />
+                        <span className="text-sm font-medium text-white">
+                          {categoryLabels[category] || category}
+                        </span>
+                        <span className="text-xs text-slate-500">{data.count}×</span>
+                      </div>
+                      <span className="text-sm font-semibold text-white">
                         {formatCurrency(data.total_cad)}
-                      </td>
-                      <td className="py-3 text-right text-emerald-400">
-                        {formatCurrency(data.total_gst)}
-                      </td>
-                      <td className="py-3 text-right text-blue-400">
-                        {formatCurrency(data.total_hst)}
-                      </td>
-                      <td className="py-3 text-right text-orange-400">
-                        {formatCurrency(data.total_pst)}
-                      </td>
-                      <td className="py-3 text-right text-slate-300">
-                        {formatCurrency(data.total_tax)}
-                      </td>
-                    </tr>
-                  )
-                )}
-              </tbody>
-              <tfoot>
-                <tr className="border-t-2 border-slate-700 font-semibold">
-                  <td className="pt-4 text-white">Total</td>
-                  <td className="pt-4 text-right text-white">
-                    {summary.totals.expense_count}
-                  </td>
-                  <td className="pt-4 text-right text-yel-500">
-                    {formatCurrency(summary.totals.total_cad)}
-                  </td>
-                  <td className="pt-4 text-right text-emerald-500">
-                    {formatCurrency(summary.totals.total_gst)}
-                  </td>
-                  <td className="pt-4 text-right text-blue-500">
-                    {formatCurrency(summary.totals.total_hst)}
-                  </td>
-                  <td className="pt-4 text-right text-orange-500">
-                    {formatCurrency(summary.totals.total_pst)}
-                  </td>
-                  <td className="pt-4 text-right text-white">
-                    {formatCurrency(summary.totals.total_tax)}
-                  </td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-3 text-xs">
+                      <span className="text-emerald-400">GST {formatCurrency(data.total_gst)}</span>
+                      <span className="text-blue-400">HST {formatCurrency(data.total_hst)}</span>
+                      <span className="text-orange-400">PST {formatCurrency(data.total_pst)}</span>
+                    </div>
+                  </div>
+                ))}
+              {/* Mobile total */}
+              <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-semibold text-amber-400">Total ({summary.totals.expense_count})</span>
+                  <span className="text-sm font-bold text-amber-400">{formatCurrency(summary.totals.total_cad)}</span>
+                </div>
+              </div>
+            </div>
+          </>
         ) : (
           <p className="text-slate-500 text-center py-8">
             No verified expenses to export

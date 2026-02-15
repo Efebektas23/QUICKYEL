@@ -2,13 +2,9 @@
 
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { motion, AnimatePresence } from "framer-motion";
 import {
-  Search,
-  Filter,
   CheckCircle,
   Clock,
-  ChevronDown,
   Fuel,
   Wrench,
   UtensilsCrossed,
@@ -19,8 +15,6 @@ import {
   HelpCircle,
   ExternalLink,
   Trash2,
-  Calendar,
-  Landmark,
 } from "lucide-react";
 import Link from "next/link";
 import { expensesApi, cardsApi } from "@/lib/firebase-api";
@@ -63,17 +57,16 @@ export default function ExpensesPage() {
     category?: string;
     verified_only?: boolean;
     quarter?: string;
-    account?: string; // "checking" for bank checking, or card last_four for specific card
+    account?: string;
   }>({});
   const [selectedExpense, setSelectedExpense] = useState<any>(null);
-  const [showFilters, setShowFilters] = useState(false);
   const pageSize = 20;
 
   // Fetch all expenses for proper client-side filtering
   const { data: allData, isLoading, refetch } = useQuery({
     queryKey: ["expenses", "all"],
     queryFn: () => expensesApi.list({ per_page: 1000 }),
-    refetchOnMount: "always", // Always refetch when navigating to this page
+    refetchOnMount: "always",
   });
 
   // Fetch cards for card-based filtering
@@ -87,17 +80,14 @@ export default function ExpensesPage() {
     if (!allData?.expenses) return { expenses: [] as any[], total: 0 };
     let expenses = [...allData.expenses];
 
-    // Category filter
     if (filter.category) {
       expenses = expenses.filter((e: any) => e.category === filter.category);
     }
 
-    // Status filter
     if (filter.verified_only !== undefined) {
       expenses = expenses.filter((e: any) => e.is_verified === filter.verified_only);
     }
 
-    // Quarter filter
     if (filter.quarter) {
       const quarter = PERIOD_OPTIONS.find((q) => q.id === filter.quarter);
       if (quarter) {
@@ -112,27 +102,21 @@ export default function ExpensesPage() {
       }
     }
 
-    // Account filter (checking account or specific card)
     if (filter.account) {
       if (filter.account === "checking") {
-        // Show only bank checking / bank import expenses
-        expenses = expenses.filter((e: any) => 
+        expenses = expenses.filter((e: any) =>
           e.payment_source === "bank_checking" || e.entry_type === "bank_import"
         );
       } else {
-        // Filter by card last 4 digits
         expenses = expenses.filter((e: any) => e.card_last_4 === filter.account);
       }
     }
 
-    // Sort by transaction date descending (newest first)
     expenses.sort((a: any, b: any) => {
       const dateA = a.transaction_date ? new Date(a.transaction_date) : new Date(0);
       const dateB = b.transaction_date ? new Date(b.transaction_date) : new Date(0);
-      // Primary: transaction_date descending
       const diff = dateB.getTime() - dateA.getTime();
       if (diff !== 0) return diff;
-      // Secondary: created_at descending (for same-day entries)
       const createdA = a.created_at ? new Date(a.created_at).getTime() : 0;
       const createdB = b.created_at ? new Date(b.created_at).getTime() : 0;
       return createdB - createdA;
@@ -148,7 +132,6 @@ export default function ExpensesPage() {
     return filteredData.expenses.slice(start, start + pageSize);
   }, [filteredData, page, pageSize]);
 
-  // Reset page when filters change
   const updateFilter = (newFilter: typeof filter) => {
     setFilter(newFilter);
     setPage(1);
@@ -166,198 +149,183 @@ export default function ExpensesPage() {
     }
   };
 
+  // Compute summary stats from filtered data
+  const summaryStats = useMemo(() => {
+    const expenses = filteredData.expenses;
+    const total = expenses.reduce((sum: number, e: any) => sum + (e.cad_amount || 0), 0);
+    const gst = expenses.reduce((sum: number, e: any) => sum + (e.gst_amount || 0), 0);
+    const hst = expenses.reduce((sum: number, e: any) => sum + (e.hst_amount || 0), 0);
+    const pst = expenses.reduce((sum: number, e: any) => sum + (e.pst_amount || 0), 0);
+    const verified = expenses.filter((e: any) => e.is_verified).length;
+    const pending = expenses.filter((e: any) => !e.is_verified).length;
+    return { total, gst, hst, pst, taxTotal: gst + hst + pst, verified, pending, count: expenses.length };
+  }, [filteredData]);
+
+  const hasActiveFilters = filter.category || filter.verified_only !== undefined || filter.quarter || filter.account;
+
+  const chipClass = (isActive: boolean) => cn(
+    "text-sm rounded-full px-3 py-1.5 border transition-colors appearance-none cursor-pointer pr-7 bg-no-repeat bg-[right_8px_center] bg-[length:12px]",
+    "bg-[url('data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2024%2024%22%20fill=%22none%22%20stroke=%22%2394a3b8%22%20stroke-width=%222%22%3E%3Cpath%20d=%22m6%209%206%206%206-6%22/%3E%3C/svg%3E')]",
+    isActive
+      ? "border-amber-500/50 bg-amber-500/10 text-amber-400"
+      : "border-slate-700 bg-slate-800/50 text-slate-400"
+  );
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 md:space-y-6">
       {/* Page Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-display font-bold text-white">
+          <h1 className="text-2xl md:text-3xl font-display font-bold text-white">
             Expenses
           </h1>
-          <p className="text-slate-400 mt-1">
-            {filteredData.total} total expenses
+          <p className="text-slate-400 text-sm mt-0.5">
+            {filteredData.total} expense{filteredData.total !== 1 ? "s" : ""}
+            {hasActiveFilters && " (filtered)"}
           </p>
         </div>
-
-        {/* Filters Toggle */}
-        <button
-          onClick={() => setShowFilters(!showFilters)}
-          className="btn-secondary"
-        >
-          <Filter className="w-4 h-4" />
-          Filters
-          <ChevronDown
-            className={cn(
-              "w-4 h-4 transition-transform",
-              showFilters && "rotate-180"
-            )}
-          />
-        </button>
       </div>
 
-      {/* Filters Panel */}
-      <AnimatePresence>
-        {showFilters && (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: "auto" }}
-            exit={{ opacity: 0, height: 0 }}
-            className="card p-4"
+      {/* Summary Bar — always visible */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="card p-3 md:p-4">
+          <p className="text-xs text-slate-500 uppercase tracking-wider mb-1">Total</p>
+          <p className="text-lg md:text-xl font-bold text-white">{formatCurrency(summaryStats.total)}</p>
+        </div>
+        <div className="card p-3 md:p-4">
+          <p className="text-xs text-slate-500 uppercase tracking-wider mb-1">Tax Claimed</p>
+          <p className="text-lg md:text-xl font-bold text-emerald-400">{formatCurrency(summaryStats.taxTotal)}</p>
+        </div>
+        <div className="card p-3 md:p-4">
+          <p className="text-xs text-slate-500 uppercase tracking-wider mb-1">Verified</p>
+          <p className="text-lg md:text-xl font-bold text-white">
+            {summaryStats.verified}
+            <span className="text-sm font-normal text-slate-500 ml-1">/ {summaryStats.count}</span>
+          </p>
+        </div>
+        <div className="card p-3 md:p-4">
+          <p className="text-xs text-slate-500 uppercase tracking-wider mb-1">Pending</p>
+          <p className="text-lg md:text-xl font-bold text-amber-400">{summaryStats.pending}</p>
+        </div>
+      </div>
+
+      {/* Inline Filters — always visible, compact chips */}
+      <div className="flex flex-wrap items-center gap-2">
+        <select
+          value={filter.quarter || ""}
+          onChange={(e) => updateFilter({ ...filter, quarter: e.target.value || undefined })}
+          className={chipClass(!!filter.quarter)}
+        >
+          <option value="">All Periods</option>
+          <optgroup label="Fiscal Year">
+            {PERIOD_OPTIONS.filter((p) => p.group === "year").map((p) => (
+              <option key={p.id} value={p.id}>{p.label}</option>
+            ))}
+          </optgroup>
+          <optgroup label="2026 Quarters">
+            {PERIOD_OPTIONS.filter((p) => p.group === "2026").map((p) => (
+              <option key={p.id} value={p.id}>{p.label}</option>
+            ))}
+          </optgroup>
+          <optgroup label="2025 Quarters">
+            {PERIOD_OPTIONS.filter((p) => p.group === "2025").map((p) => (
+              <option key={p.id} value={p.id}>{p.label}</option>
+            ))}
+          </optgroup>
+        </select>
+
+        <select
+          value={filter.category || ""}
+          onChange={(e) => updateFilter({ ...filter, category: e.target.value || undefined })}
+          className={chipClass(!!filter.category)}
+        >
+          <option value="">All Categories</option>
+          {Object.entries(categoryLabels).map(([value, label]) => (
+            <option key={value} value={value}>{label}</option>
+          ))}
+        </select>
+
+        <select
+          value={filter.account || ""}
+          onChange={(e) => updateFilter({ ...filter, account: e.target.value || undefined })}
+          className={chipClass(!!filter.account)}
+        >
+          <option value="">All Accounts</option>
+          <optgroup label="Bank Accounts">
+            <option value="checking">RBC Checking</option>
+          </optgroup>
+          {cards && cards.length > 0 && (() => {
+            const cadCards = cards.filter((c: any) => c.currency === "CAD");
+            const usdCards = cards.filter((c: any) => c.currency === "USD");
+            const otherCards = cards.filter((c: any) => !c.currency);
+            return (
+              <>
+                {cadCards.length > 0 && (
+                  <optgroup label="CAD Cards">
+                    {cadCards.map((card: any) => (
+                      <option key={card.id} value={card.last_four}>
+                        {card.card_name} (•••• {card.last_four})
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                {usdCards.length > 0 && (
+                  <optgroup label="USD Cards">
+                    {usdCards.map((card: any) => (
+                      <option key={card.id} value={card.last_four}>
+                        {card.card_name} (•••• {card.last_four})
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                {otherCards.length > 0 && (
+                  <optgroup label="Other Cards">
+                    {otherCards.map((card: any) => (
+                      <option key={card.id} value={card.last_four}>
+                        {card.card_name} (•••• {card.last_four})
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+              </>
+            );
+          })()}
+        </select>
+
+        <select
+          value={
+            filter.verified_only === undefined
+              ? ""
+              : filter.verified_only
+                ? "verified"
+                : "pending"
+          }
+          onChange={(e) => {
+            if (e.target.value === "") {
+              updateFilter({ ...filter, verified_only: undefined });
+            } else {
+              updateFilter({
+                ...filter,
+                verified_only: e.target.value === "verified",
+              });
+            }
+          }}
+          className={chipClass(filter.verified_only !== undefined)}
+        >
+          <option value="">All Status</option>
+          <option value="verified">Verified</option>
+          <option value="pending">Pending Review</option>
+        </select>
+
+        {hasActiveFilters && (
+          <button
+            onClick={() => updateFilter({})}
+            className="text-xs text-slate-400 hover:text-white px-2 py-1 transition-colors"
           >
-            <div className="flex flex-wrap gap-4">
-              {/* Period / Quarter Filter */}
-              <div>
-                <label className="text-sm text-slate-400 mb-1 block">
-                  <Calendar className="w-3.5 h-3.5 inline mr-1" />
-                  Period
-                </label>
-                <select
-                  value={filter.quarter || ""}
-                  onChange={(e) =>
-                    updateFilter({ ...filter, quarter: e.target.value || undefined })
-                  }
-                  className="input-field min-w-[220px]"
-                >
-                  <option value="">All Periods</option>
-                  <optgroup label="Fiscal Year">
-                    {PERIOD_OPTIONS.filter((p) => p.group === "year").map((p) => (
-                      <option key={p.id} value={p.id}>{p.label}</option>
-                    ))}
-                  </optgroup>
-                  <optgroup label="2026 Quarters">
-                    {PERIOD_OPTIONS.filter((p) => p.group === "2026").map((p) => (
-                      <option key={p.id} value={p.id}>{p.label}</option>
-                    ))}
-                  </optgroup>
-                  <optgroup label="2025 Quarters">
-                    {PERIOD_OPTIONS.filter((p) => p.group === "2025").map((p) => (
-                      <option key={p.id} value={p.id}>{p.label}</option>
-                    ))}
-                  </optgroup>
-                </select>
-              </div>
-
-              {/* Category Filter */}
-              <div>
-                <label className="text-sm text-slate-400 mb-1 block">
-                  Category
-                </label>
-                <select
-                  value={filter.category || ""}
-                  onChange={(e) =>
-                    updateFilter({ ...filter, category: e.target.value || undefined })
-                  }
-                  className="input-field min-w-[180px]"
-                >
-                  <option value="">All Categories</option>
-                  {Object.entries(categoryLabels).map(([value, label]) => (
-                    <option key={value} value={value}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Account Filter */}
-              <div>
-                <label className="text-sm text-slate-400 mb-1 block">
-                  <Landmark className="w-3.5 h-3.5 inline mr-1" />
-                  Account
-                </label>
-                <select
-                  value={filter.account || ""}
-                  onChange={(e) =>
-                    updateFilter({ ...filter, account: e.target.value || undefined })
-                  }
-                  className="input-field min-w-[250px]"
-                >
-                  <option value="">All Accounts</option>
-                  <optgroup label="Bank Accounts">
-                    <option value="checking">RBC Checking</option>
-                  </optgroup>
-                  {cards && cards.length > 0 && (() => {
-                    const cadCards = cards.filter((c: any) => c.currency === "CAD");
-                    const usdCards = cards.filter((c: any) => c.currency === "USD");
-                    const otherCards = cards.filter((c: any) => !c.currency);
-                    return (
-                      <>
-                        {cadCards.length > 0 && (
-                          <optgroup label="CAD Cards">
-                            {cadCards.map((card: any) => (
-                              <option key={card.id} value={card.last_four}>
-                                {card.card_name} (•••• {card.last_four})
-                              </option>
-                            ))}
-                          </optgroup>
-                        )}
-                        {usdCards.length > 0 && (
-                          <optgroup label="USD Cards">
-                            {usdCards.map((card: any) => (
-                              <option key={card.id} value={card.last_four}>
-                                {card.card_name} (•••• {card.last_four})
-                              </option>
-                            ))}
-                          </optgroup>
-                        )}
-                        {otherCards.length > 0 && (
-                          <optgroup label="Other Cards">
-                            {otherCards.map((card: any) => (
-                              <option key={card.id} value={card.last_four}>
-                                {card.card_name} (•••• {card.last_four})
-                              </option>
-                            ))}
-                          </optgroup>
-                        )}
-                      </>
-                    );
-                  })()}
-                </select>
-              </div>
-
-              {/* Verification Filter */}
-              <div>
-                <label className="text-sm text-slate-400 mb-1 block">
-                  Status
-                </label>
-                <select
-                  value={
-                    filter.verified_only === undefined
-                      ? ""
-                      : filter.verified_only
-                      ? "verified"
-                      : "pending"
-                  }
-                  onChange={(e) => {
-                    if (e.target.value === "") {
-                      updateFilter({ ...filter, verified_only: undefined });
-                    } else {
-                      updateFilter({
-                        ...filter,
-                        verified_only: e.target.value === "verified",
-                      });
-                    }
-                  }}
-                  className="input-field min-w-[140px]"
-                >
-                  <option value="">All</option>
-                  <option value="verified">Verified</option>
-                  <option value="pending">Pending Review</option>
-                </select>
-              </div>
-
-              {/* Clear Filters */}
-              <div className="flex items-end">
-                <button
-                  onClick={() => updateFilter({})}
-                  className="btn-ghost text-sm"
-                >
-                  Clear Filters
-                </button>
-              </div>
-            </div>
-          </motion.div>
+            Clear all
+          </button>
         )}
-      </AnimatePresence>
+      </div>
 
       {/* Expenses List */}
       <div className="card overflow-hidden">
@@ -372,24 +340,12 @@ export default function ExpensesPage() {
               <table className="w-full">
                 <thead>
                   <tr className="bg-slate-800/50 text-left">
-                    <th className="px-6 py-4 text-sm font-medium text-slate-400">
-                      Date
-                    </th>
-                    <th className="px-6 py-4 text-sm font-medium text-slate-400">
-                      Vendor
-                    </th>
-                    <th className="px-6 py-4 text-sm font-medium text-slate-400">
-                      Category
-                    </th>
-                    <th className="px-6 py-4 text-sm font-medium text-slate-400 text-right">
-                      Amount (CAD)
-                    </th>
-                    <th className="px-6 py-4 text-sm font-medium text-slate-400">
-                      Status
-                    </th>
-                    <th className="px-6 py-4 text-sm font-medium text-slate-400">
-                      Actions
-                    </th>
+                    <th className="px-6 py-4 text-sm font-medium text-slate-400">Date</th>
+                    <th className="px-6 py-4 text-sm font-medium text-slate-400">Vendor</th>
+                    <th className="px-6 py-4 text-sm font-medium text-slate-400">Category</th>
+                    <th className="px-6 py-4 text-sm font-medium text-slate-400 text-right">Amount (CAD)</th>
+                    <th className="px-6 py-4 text-sm font-medium text-slate-400">Status</th>
+                    <th className="px-6 py-4 text-sm font-medium text-slate-400">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800">
@@ -405,8 +361,8 @@ export default function ExpensesPage() {
               </table>
             </div>
 
-            {/* Mobile Cards */}
-            <div className="md:hidden divide-y divide-slate-800">
+            {/* Mobile Cards — improved with larger touch targets */}
+            <div className="md:hidden divide-y divide-slate-800/50">
               {paginatedExpenses.map((expense: any) => (
                 <ExpenseCard
                   key={expense.id}
@@ -422,24 +378,18 @@ export default function ExpensesPage() {
             <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-slate-800 flex items-center justify-center">
               <FileText className="w-8 h-8 text-slate-600" />
             </div>
-            <h3 className="text-lg font-medium text-white mb-2">
-              No expenses found
-            </h3>
+            <h3 className="text-lg font-medium text-white mb-2">No expenses found</h3>
             <p className="text-slate-400 mb-4">
-              {Object.keys(filter).length > 0
-                ? "Try adjusting your filters"
-                : "Upload your first receipt to get started"}
+              {hasActiveFilters ? "Try adjusting your filters" : "Upload your first receipt to get started"}
             </p>
-            <Link href="/upload" className="btn-primary">
-              Upload Receipt
-            </Link>
+            <Link href="/upload" className="btn-primary">Upload Receipt</Link>
           </div>
         )}
 
         {/* Pagination */}
         {filteredData.total > pageSize && (
-          <div className="px-6 py-4 border-t border-slate-800 flex items-center justify-between">
-            <p className="text-sm text-slate-400">
+          <div className="px-4 md:px-6 py-3 md:py-4 border-t border-slate-800 flex items-center justify-between">
+            <p className="text-xs md:text-sm text-slate-400">
               Page {page} of {totalPages} ({filteredData.total} results)
             </p>
             <div className="flex gap-2">
@@ -578,7 +528,10 @@ function ExpenseCard({
   const color = categoryColors[expense.category] || "#6B7280";
 
   return (
-    <div className="p-4 hover:bg-slate-800/30 transition-colors">
+    <div
+      className="p-4 hover:bg-slate-800/30 transition-colors active:bg-slate-800/50 cursor-pointer"
+      onClick={onEdit}
+    >
       <div className="flex items-start gap-3">
         {expense.receipt_image_url && (
           <div className="w-12 h-16 rounded-lg overflow-hidden bg-slate-800 flex-shrink-0">
@@ -591,7 +544,7 @@ function ExpenseCard({
         )}
         <div className="flex-1 min-w-0">
           <div className="flex items-start justify-between gap-2">
-            <div>
+            <div className="min-w-0">
               <p className="text-sm font-medium text-white truncate">
                 {expense.vendor_name || "Unknown Vendor"}
               </p>
@@ -599,9 +552,16 @@ function ExpenseCard({
                 {formatDate(expense.transaction_date)}
               </p>
             </div>
-            <p className="text-sm font-semibold text-white">
-              {formatCurrency(expense.cad_amount)}
-            </p>
+            <div className="text-right flex-shrink-0">
+              <p className="text-sm font-semibold text-white">
+                {formatCurrency(expense.cad_amount)}
+              </p>
+              {expense.original_currency === "USD" && (
+                <p className="text-xs text-slate-500">
+                  {formatCurrency(expense.original_amount, "USD")}
+                </p>
+              )}
+            </div>
           </div>
           <div className="flex items-center justify-between mt-2">
             <span
@@ -621,14 +581,8 @@ function ExpenseCard({
                 <Clock className="w-4 h-4 text-amber-500" />
               )}
               <button
-                onClick={onEdit}
-                className="p-1.5 text-slate-400 hover:text-yel-500"
-              >
-                <ExternalLink className="w-4 h-4" />
-              </button>
-              <button
-                onClick={onDelete}
-                className="p-1.5 text-slate-400 hover:text-red-500"
+                onClick={(e) => { e.stopPropagation(); onDelete(); }}
+                className="p-1.5 text-slate-400 hover:text-red-500 min-w-[32px] min-h-[32px] flex items-center justify-center"
               >
                 <Trash2 className="w-4 h-4" />
               </button>
@@ -639,4 +593,3 @@ function ExpenseCard({
     </div>
   );
 }
-

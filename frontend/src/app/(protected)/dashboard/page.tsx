@@ -128,7 +128,7 @@ export default function DashboardPage() {
         (sum, r) => sum + (r.amount_cad || 0),
         0
       );
-      
+
       // USD revenue breakdown
       const usdRevenues = revenues.filter((r) => r.currency === "USD");
       const cadRevenues = revenues.filter((r) => r.currency !== "USD");
@@ -219,12 +219,12 @@ export default function DashboardPage() {
   return (
     <div className="space-y-8">
       {/* Page Header with Period Selector */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h1 className="text-3xl font-display font-bold text-white">
+          <h1 className="text-2xl md:text-3xl font-display font-bold text-white">
             Dashboard
           </h1>
-          <p className="text-slate-400 mt-1">
+          <p className="text-slate-400 text-sm mt-0.5">
             Track your business at a glance
           </p>
         </div>
@@ -233,7 +233,7 @@ export default function DashboardPage() {
           <div className="relative">
             <button
               onClick={() => setShowPeriodMenu(!showPeriodMenu)}
-              className="flex items-center gap-2 px-4 py-2.5 bg-slate-800 border border-slate-700 rounded-xl text-sm font-medium text-white hover:bg-slate-700 transition-colors"
+              className="flex items-center gap-2 px-3 md:px-4 py-2 md:py-2.5 bg-slate-800 border border-slate-700 rounded-xl text-sm font-medium text-white hover:bg-slate-700 transition-colors"
             >
               <Calendar className="w-4 h-4 text-amber-500" />
               {currentPeriod.shortLabel}
@@ -288,11 +288,11 @@ export default function DashboardPage() {
             )}
           </div>
 
-          <Link href="/revenue" className="btn-secondary">
+          <Link href="/revenue" className="btn-secondary hidden sm:flex">
             <DollarSign className="w-5 h-5" />
             Add Revenue
           </Link>
-          <Link href="/upload" className="btn-primary">
+          <Link href="/upload" className="btn-primary hidden sm:flex">
             <Upload className="w-5 h-5" />
             Upload Receipt
           </Link>
@@ -666,30 +666,46 @@ export default function DashboardPage() {
 
       {/* Main Content Grid */}
       <div className="grid lg:grid-cols-3 gap-6">
-        {/* Category Breakdown */}
-        <div className="lg:col-span-2 card p-6">
+        {/* Category Breakdown with Donut Chart */}
+        <div className="lg:col-span-2 card p-4 md:p-6">
           <h2 className="text-lg font-semibold text-white mb-4">
             Expenses by Category
           </h2>
-          <div className="space-y-3">
-            {summaryLoading ? (
-              <LoadingSkeleton count={5} />
-            ) : summary?.by_category ? (
-              Object.entries(summary.by_category)
-                .sort(([, a]: [string, any], [, b]: [string, any]) => b.total_cad - a.total_cad)
-                .map(([category, data]: [string, any]) => (
-                  <CategoryBar
-                    key={category}
-                    category={category}
-                    amount={data.total_cad}
-                    count={data.count}
-                    total={summary.totals.total_cad}
-                  />
-                ))
-            ) : (
-              <EmptyState message="No expenses yet" />
-            )}
-          </div>
+          {summaryLoading ? (
+            <LoadingSkeleton count={5} />
+          ) : summary?.by_category ? (
+            <div className="flex flex-col md:flex-row gap-6 items-start">
+              {/* SVG Donut Chart */}
+              <div className="mx-auto md:mx-0 flex-shrink-0">
+                <CategoryDonut
+                  categories={Object.entries(summary.by_category)
+                    .sort(([, a]: [string, any], [, b]: [string, any]) => b.total_cad - a.total_cad)
+                    .map(([cat, data]: [string, any]) => ({
+                      category: cat,
+                      amount: data.total_cad,
+                      color: categoryColors[cat] || "#6B7280",
+                    }))}
+                  total={summary.totals.total_cad}
+                />
+              </div>
+              {/* Category Bars */}
+              <div className="flex-1 space-y-3 w-full">
+                {Object.entries(summary.by_category)
+                  .sort(([, a]: [string, any], [, b]: [string, any]) => b.total_cad - a.total_cad)
+                  .map(([category, data]: [string, any]) => (
+                    <CategoryBar
+                      key={category}
+                      category={category}
+                      amount={data.total_cad}
+                      count={data.count}
+                      total={summary.totals.total_cad}
+                    />
+                  ))}
+              </div>
+            </div>
+          ) : (
+            <EmptyState message="No expenses yet" />
+          )}
         </div>
 
         {/* Recent Expenses */}
@@ -717,9 +733,8 @@ export default function DashboardPage() {
                     <div
                       className="w-10 h-10 rounded-lg flex items-center justify-center"
                       style={{
-                        backgroundColor: `${
-                          categoryColors[expense.category] || "#6B7280"
-                        }20`,
+                        backgroundColor: `${categoryColors[expense.category] || "#6B7280"
+                          }20`,
                         color:
                           categoryColors[expense.category] || "#6B7280",
                       }}
@@ -959,6 +974,74 @@ function CategoryBar({
           className="h-full rounded-full"
           style={{ backgroundColor: color }}
         />
+      </div>
+    </div>
+  );
+}
+
+// SVG Donut Chart for category breakdown
+function CategoryDonut({
+  categories,
+  total,
+}: {
+  categories: { category: string; amount: number; color: string }[];
+  total: number;
+}) {
+  const size = 180;
+  const strokeWidth = 28;
+  const radius = (size - strokeWidth) / 2;
+  const circumference = 2 * Math.PI * radius;
+
+  // Calculate arc segments
+  let cumulativePercent = 0;
+  const segments = categories.map((cat) => {
+    const percent = total > 0 ? cat.amount / total : 0;
+    const offset = cumulativePercent;
+    cumulativePercent += percent;
+    return {
+      ...cat,
+      percent,
+      dashArray: `${circumference * percent} ${circumference * (1 - percent)}`,
+      dashOffset: -circumference * offset,
+    };
+  });
+
+  return (
+    <div className="relative" style={{ width: size, height: size }}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="-rotate-90">
+        {/* Background ring */}
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          stroke="#1e293b"
+          strokeWidth={strokeWidth}
+        />
+        {/* Category segments */}
+        {segments.map((seg, idx) => (
+          <circle
+            key={seg.category}
+            cx={size / 2}
+            cy={size / 2}
+            r={radius}
+            fill="none"
+            stroke={seg.color}
+            strokeWidth={strokeWidth}
+            strokeDasharray={seg.dashArray}
+            strokeDashoffset={seg.dashOffset}
+            strokeLinecap="butt"
+            className="transition-all duration-500"
+            style={{
+              filter: `drop-shadow(0 0 3px ${seg.color}40)`,
+            }}
+          />
+        ))}
+      </svg>
+      {/* Center label */}
+      <div className="absolute inset-0 flex flex-col items-center justify-center">
+        <p className="text-xs text-slate-500 uppercase tracking-wider">Total</p>
+        <p className="text-lg font-bold text-white">{formatCurrency(total)}</p>
       </div>
     </div>
   );

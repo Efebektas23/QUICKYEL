@@ -17,6 +17,7 @@ import {
   X,
   PenLine,
   AlertTriangle,
+  ChevronDown,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { useQueryClient } from "@tanstack/react-query";
@@ -133,177 +134,227 @@ export default function UploadPage() {
     router.push("/expenses");
   };
 
+  const triggerCamera = (e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/*";
+    input.capture = "environment";
+    input.multiple = true;
+    input.onchange = (ev: any) => {
+      if (ev.target.files) {
+        onDrop(Array.from(ev.target.files));
+      }
+    };
+    input.click();
+  };
+
+  const triggerGallery = (e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/*";
+    input.multiple = true;
+    input.onchange = (ev: any) => {
+      if (ev.target.files) {
+        onDrop(Array.from(ev.target.files));
+      }
+    };
+    input.click();
+  };
+
+  const [showTips, setShowTips] = useState(false);
+
   return (
     <div className="max-w-2xl mx-auto">
       {/* Page Header */}
-      <div className="text-center mb-8">
-        <h1 className="text-3xl font-bold text-white">Add Expense</h1>
-        <p className="text-slate-400 mt-2">
-          Upload a receipt or add manual entry (insurance, bank fees, etc.)
+      <div className="text-center mb-6">
+        <h1 className="text-2xl md:text-3xl font-bold text-white">Add Expense</h1>
+        <p className="text-slate-400 mt-1 text-sm md:text-base">
+          Snap a receipt or add a manual entry
         </p>
       </div>
 
-      {/* Entry Type Selector */}
-      <div className="flex gap-4 mb-6">
-        <div className="flex-1 card p-4 border-2 border-yel-500/50 bg-yel-500/5">
-          <div className="flex items-center gap-3 mb-2">
-            <div className="w-10 h-10 rounded-xl bg-yel-500/20 flex items-center justify-center">
-              <Camera className="w-5 h-5 text-yel-500" />
-            </div>
-            <div>
-              <h3 className="font-semibold text-white">Upload Receipt</h3>
-              <p className="text-xs text-slate-400">AI extracts data automatically</p>
-            </div>
-          </div>
-        </div>
-        <button 
-          onClick={() => setShowManualEntryModal(true)}
-          className="flex-1 card p-4 border-2 border-slate-700 hover:border-blue-500/50 hover:bg-blue-500/5 transition-all group"
-        >
-          <div className="flex items-center gap-3 mb-2">
-            <div className="w-10 h-10 rounded-xl bg-slate-800 group-hover:bg-blue-500/20 flex items-center justify-center transition-colors">
-              <PenLine className="w-5 h-5 text-slate-400 group-hover:text-blue-400 transition-colors" />
-            </div>
-            <div className="text-left">
-              <h3 className="font-semibold text-white">Manual Entry</h3>
-              <p className="text-xs text-slate-400">Insurance, bank fees, etc.</p>
-            </div>
-          </div>
-        </button>
-      </div>
-
-      {/* Upload Area */}
-      <div className="card p-8">
-        <AnimatePresence mode="wait">
-          {uploadState === "idle" || uploadState === "error" ? (
-            <motion.div
-              key="dropzone"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-            >
-              {/* Selected Files Preview */}
-              {selectedFiles.length > 0 && (
-                <div className="mb-6">
-                  <div className="flex items-center justify-between mb-3">
-                    <span className="text-sm text-slate-400">
-                      {selectedFiles.length} image(s) selected
-                    </span>
-                    <button
-                      onClick={reset}
-                      className="text-sm text-red-400 hover:text-red-300"
-                    >
-                      Clear All
-                    </button>
-                  </div>
-                  <div className="grid grid-cols-3 sm:grid-cols-5 gap-3">
-                    {selectedFiles.map((sf, index) => (
-                      <div
-                        key={index}
-                        className="relative aspect-[3/4] rounded-lg overflow-hidden bg-slate-800 group"
-                      >
-                        <img
-                          src={sf.preview}
-                          alt={`Receipt ${index + 1}`}
-                          className="w-full h-full object-cover"
-                        />
-                        <button
-                          onClick={() => removeFile(index)}
-                          className="absolute top-1 right-1 w-6 h-6 bg-red-500 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                        >
-                          <X className="w-4 h-4 text-white" />
-                        </button>
-                        <div className="absolute bottom-1 left-1 bg-black/60 text-white text-xs px-1.5 py-0.5 rounded">
-                          {index + 1}
-                        </div>
-                      </div>
-                    ))}
-                    {/* Add More Button */}
-                    <div
-                      {...getRootProps()}
-                      className="aspect-[3/4] rounded-lg border-2 border-dashed border-slate-700 hover:border-amber-500 flex items-center justify-center cursor-pointer transition-colors"
-                    >
-                      <input {...getInputProps()} />
-                      <Plus className="w-8 h-8 text-slate-500" />
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Dropzone */}
-              {selectedFiles.length === 0 && (
-                <div
-                  {...getRootProps()}
-                  className={cn(
-                    "relative border-2 border-dashed rounded-2xl p-12 text-center cursor-pointer transition-all",
-                    isDragActive
-                      ? "border-amber-500 bg-amber-500/5"
-                      : "border-slate-700 hover:border-slate-600 hover:bg-slate-800/50"
-                  )}
+      <AnimatePresence mode="wait">
+        {uploadState === "idle" || uploadState === "error" ? (
+          <motion.div
+            key="idle"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="space-y-4"
+          >
+            {/* === MOBILE: Camera Hero Button === */}
+            {selectedFiles.length === 0 && (
+              <div className="md:hidden space-y-3">
+                {/* Primary: Camera Capture */}
+                <motion.button
+                  whileTap={{ scale: 0.97 }}
+                  onClick={() => triggerCamera()}
+                  className="w-full relative overflow-hidden rounded-2xl bg-gradient-to-br from-amber-500 to-amber-600 p-6 shadow-xl shadow-amber-500/25 active:shadow-amber-500/40 transition-shadow"
                 >
-                  <input {...getInputProps()} />
-
-                  <div className="flex flex-col items-center gap-4">
-                    <div
-                      className={cn(
-                        "w-16 h-16 rounded-2xl flex items-center justify-center transition-colors",
-                        isDragActive
-                          ? "bg-amber-500/20 text-amber-500"
-                          : "bg-slate-800 text-slate-400"
-                      )}
-                    >
-                      {isDragActive ? (
-                        <Upload className="w-8 h-8" />
-                      ) : (
-                        <ImageIcon className="w-8 h-8" />
-                      )}
+                  <div className="flex items-center gap-4">
+                    <div className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center flex-shrink-0">
+                      <Camera className="w-7 h-7 text-slate-950" />
                     </div>
+                    <div className="text-left">
+                      <p className="text-lg font-bold text-slate-950">Take Photo</p>
+                      <p className="text-sm text-slate-950/70">
+                        Snap a receipt — AI extracts all data
+                      </p>
+                    </div>
+                    <ArrowRight className="w-5 h-5 text-slate-950/60 ml-auto" />
+                  </div>
+                </motion.button>
 
-                    <div>
-                      <p className="text-lg font-medium text-white mb-1">
-                        {isDragActive
-                          ? "Drop receipts here"
-                          : "Drag & drop receipt images"}
-                      </p>
-                      <p className="text-slate-500">
-                        or click • You can select multiple images
-                      </p>
-                      <p className="text-slate-600 text-sm mt-1">
-                        JPEG, PNG, HEIC • Max 10MB/image
-                      </p>
+                {/* Secondary Actions */}
+                <div className="flex gap-3">
+                  <motion.button
+                    whileTap={{ scale: 0.97 }}
+                    onClick={() => triggerGallery()}
+                    className="flex-1 flex items-center gap-3 p-4 rounded-xl bg-slate-800/80 border border-slate-700 active:bg-slate-700 transition-colors"
+                  >
+                    <ImageIcon className="w-5 h-5 text-slate-400" />
+                    <span className="text-sm font-medium text-white">Gallery</span>
+                  </motion.button>
+                  <motion.button
+                    whileTap={{ scale: 0.97 }}
+                    onClick={() => setShowManualEntryModal(true)}
+                    className="flex-1 flex items-center gap-3 p-4 rounded-xl bg-slate-800/80 border border-slate-700 active:bg-slate-700 transition-colors"
+                  >
+                    <PenLine className="w-5 h-5 text-slate-400" />
+                    <span className="text-sm font-medium text-white">Manual</span>
+                  </motion.button>
+                </div>
+              </div>
+            )}
+
+            {/* === DESKTOP: Drag-and-Drop with Manual Entry option === */}
+            {selectedFiles.length === 0 && (
+              <div className="hidden md:block">
+                <div className="flex gap-4 mb-4">
+                  <div className="flex-1 card p-4 border-2 border-yel-500/50 bg-yel-500/5">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-yel-500/20 flex items-center justify-center">
+                        <Camera className="w-5 h-5 text-yel-500" />
+                      </div>
+                      <div>
+                        <h3 className="font-semibold text-white">Upload Receipt</h3>
+                        <p className="text-xs text-slate-400">AI extracts data automatically</p>
+                      </div>
                     </div>
                   </div>
+                  <button
+                    onClick={() => setShowManualEntryModal(true)}
+                    className="flex-1 card p-4 border-2 border-slate-700 hover:border-blue-500/50 hover:bg-blue-500/5 transition-all group"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-slate-800 group-hover:bg-blue-500/20 flex items-center justify-center transition-colors">
+                        <PenLine className="w-5 h-5 text-slate-400 group-hover:text-blue-400 transition-colors" />
+                      </div>
+                      <div className="text-left">
+                        <h3 className="font-semibold text-white">Manual Entry</h3>
+                        <p className="text-xs text-slate-400">Insurance, bank fees, etc.</p>
+                      </div>
+                    </div>
+                  </button>
+                </div>
 
-                  {/* Camera Button for Mobile */}
-                  <div className="mt-6 pt-6 border-t border-slate-800">
-                    <button
-                      type="button"
-                      className="btn-secondary w-full"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        const input = document.createElement("input");
-                        input.type = "file";
-                        input.accept = "image/*";
-                        input.capture = "environment";
-                        input.multiple = true;
-                        input.onchange = (e: any) => {
-                          if (e.target.files) {
-                            onDrop(Array.from(e.target.files));
-                          }
-                        };
-                        input.click();
-                      }}
-                    >
-                      <Camera className="w-5 h-5" />
-                      Take Photo
-                    </button>
+                <div className="card p-8">
+                  <div
+                    {...getRootProps()}
+                    className={cn(
+                      "relative border-2 border-dashed rounded-2xl p-12 text-center cursor-pointer transition-all",
+                      isDragActive
+                        ? "border-amber-500 bg-amber-500/5"
+                        : "border-slate-700 hover:border-slate-600 hover:bg-slate-800/50"
+                    )}
+                  >
+                    <input {...getInputProps()} />
+                    <div className="flex flex-col items-center gap-4">
+                      <div
+                        className={cn(
+                          "w-16 h-16 rounded-2xl flex items-center justify-center transition-colors",
+                          isDragActive
+                            ? "bg-amber-500/20 text-amber-500"
+                            : "bg-slate-800 text-slate-400"
+                        )}
+                      >
+                        {isDragActive ? (
+                          <Upload className="w-8 h-8" />
+                        ) : (
+                          <ImageIcon className="w-8 h-8" />
+                        )}
+                      </div>
+                      <div>
+                        <p className="text-lg font-medium text-white mb-1">
+                          {isDragActive
+                            ? "Drop receipts here"
+                            : "Drag & drop receipt images"}
+                        </p>
+                        <p className="text-slate-500">
+                          or click to browse • Multiple images supported
+                        </p>
+                        <p className="text-slate-600 text-sm mt-1">
+                          JPEG, PNG, HEIC • Max 10MB per image
+                        </p>
+                      </div>
+                    </div>
                   </div>
                 </div>
-              )}
+              </div>
+            )}
 
-              {/* Process Button */}
-              {selectedFiles.length > 0 && (
-                <button
+            {/* === Selected Files Preview (both mobile & desktop) === */}
+            {selectedFiles.length > 0 && (
+              <div className="card p-4 md:p-6">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-sm font-medium text-white">
+                    {selectedFiles.length} image{selectedFiles.length > 1 ? "s" : ""} selected
+                  </span>
+                  <button
+                    onClick={reset}
+                    className="text-sm text-red-400 hover:text-red-300 flex items-center gap-1"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                    Clear
+                  </button>
+                </div>
+                <div className="grid grid-cols-3 sm:grid-cols-5 gap-3">
+                  {selectedFiles.map((sf, index) => (
+                    <div
+                      key={index}
+                      className="relative aspect-[3/4] rounded-xl overflow-hidden bg-slate-800 group"
+                    >
+                      <img
+                        src={sf.preview}
+                        alt={`Receipt ${index + 1}`}
+                        className="w-full h-full object-cover"
+                      />
+                      <button
+                        onClick={() => removeFile(index)}
+                        className="absolute top-1.5 right-1.5 w-7 h-7 bg-red-500/90 rounded-full flex items-center justify-center opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity shadow-lg"
+                      >
+                        <X className="w-4 h-4 text-white" />
+                      </button>
+                      <div className="absolute bottom-1.5 left-1.5 bg-black/60 text-white text-xs px-2 py-0.5 rounded-full font-medium">
+                        {index + 1}
+                      </div>
+                    </div>
+                  ))}
+                  {/* Add More */}
+                  <button
+                    onClick={() => triggerGallery()}
+                    className="aspect-[3/4] rounded-xl border-2 border-dashed border-slate-700 hover:border-amber-500 flex flex-col items-center justify-center cursor-pointer transition-colors gap-1"
+                  >
+                    <Plus className="w-6 h-6 text-slate-500" />
+                    <span className="text-[10px] text-slate-500">Add</span>
+                  </button>
+                </div>
+
+                {/* Process Button */}
+                <motion.button
+                  whileTap={{ scale: 0.98 }}
                   onClick={() => processFiles()}
                   className="btn-primary w-full mt-4"
                 >
@@ -311,76 +362,82 @@ export default function UploadPage() {
                   {selectedFiles.length === 1
                     ? "Process Receipt"
                     : `Merge & Process ${selectedFiles.length} Images`}
-                </button>
-              )}
+                </motion.button>
+              </div>
+            )}
 
-              {/* Error Message */}
-              {error && (() => {
-                const isDuplicate = error.includes("already been uploaded") || error.includes("appears to have been uploaded");
-                return (
-                  <div className={`mt-4 p-4 rounded-xl border ${
-                    isDuplicate
-                      ? "bg-amber-500/10 border-amber-500/20"
-                      : "bg-red-500/10 border-red-500/20"
-                  }`}>
-                    <div className="flex items-start gap-3">
-                      {isDuplicate ? (
-                        <AlertTriangle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
-                      ) : (
-                        <XCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
-                      )}
-                      <div className="flex-1">
-                        <p className={`font-medium ${isDuplicate ? "text-amber-400" : "text-red-400"}`}>
-                          {isDuplicate ? "Duplicate Receipt Detected" : "Processing Error"}
-                        </p>
-                        <p className="text-slate-400 text-sm mt-1">{error}</p>
-                        <div className="flex flex-wrap gap-3 mt-3">
-                          <button
-                            onClick={reset}
-                            className="text-sm text-slate-300 hover:text-white font-medium"
-                          >
-                            Upload Different Receipt
-                          </button>
-                          {isDuplicate && (
-                            <>
-                              <button
-                                onClick={() => processFiles(true)}
-                                className="text-sm text-amber-500 hover:text-amber-400 font-semibold flex items-center gap-1"
-                              >
-                                <Upload className="w-3.5 h-3.5" />
-                                Upload Anyway
-                              </button>
-                              <button
-                                onClick={() => router.push("/expenses")}
-                                className="text-sm text-slate-400 hover:text-slate-300 font-medium"
-                              >
-                                View Expenses
-                              </button>
-                            </>
-                          )}
-                        </div>
+            {/* Error Message */}
+            {error && (() => {
+              const isDuplicate = error.includes("already been uploaded") || error.includes("appears to have been uploaded");
+              return (
+                <motion.div
+                  initial={{ opacity: 0, y: 5 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className={`p-4 rounded-xl border ${isDuplicate
+                    ? "bg-amber-500/10 border-amber-500/20"
+                    : "bg-red-500/10 border-red-500/20"
+                    }`}
+                >
+                  <div className="flex items-start gap-3">
+                    {isDuplicate ? (
+                      <AlertTriangle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
+                    ) : (
+                      <XCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
+                    )}
+                    <div className="flex-1">
+                      <p className={`font-medium ${isDuplicate ? "text-amber-400" : "text-red-400"}`}>
+                        {isDuplicate ? "Duplicate Receipt Detected" : "Processing Error"}
+                      </p>
+                      <p className="text-slate-400 text-sm mt-1">{error}</p>
+                      <div className="flex flex-wrap gap-3 mt-3">
+                        <button
+                          onClick={reset}
+                          className="text-sm text-slate-300 hover:text-white font-medium"
+                        >
+                          Upload Different Receipt
+                        </button>
+                        {isDuplicate && (
+                          <>
+                            <button
+                              onClick={() => processFiles(true)}
+                              className="text-sm text-amber-500 hover:text-amber-400 font-semibold flex items-center gap-1"
+                            >
+                              <Upload className="w-3.5 h-3.5" />
+                              Upload Anyway
+                            </button>
+                            <button
+                              onClick={() => router.push("/expenses")}
+                              className="text-sm text-slate-400 hover:text-slate-300 font-medium"
+                            >
+                              View Expenses
+                            </button>
+                          </>
+                        )}
                       </div>
                     </div>
                   </div>
-                );
-              })()}
-            </motion.div>
-          ) : (
-            <motion.div
-              key="processing"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="text-center"
-            >
-              {/* Preview Images */}
+                </motion.div>
+              );
+            })()}
+          </motion.div>
+        ) : (
+          <motion.div
+            key="processing"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            className="card p-6 md:p-8"
+          >
+            {/* Processing Animation */}
+            <div className="text-center">
+              {/* Preview thumbnails */}
               {selectedFiles.length > 0 && (
                 <div className="mb-6">
                   <div className="flex justify-center gap-2 flex-wrap">
                     {selectedFiles.slice(0, 3).map((sf, index) => (
                       <div
                         key={index}
-                        className="relative w-20 h-28 rounded-lg overflow-hidden bg-slate-800"
+                        className="relative w-16 h-22 md:w-20 md:h-28 rounded-lg overflow-hidden bg-slate-800"
                       >
                         <img
                           src={sf.preview}
@@ -389,13 +446,18 @@ export default function UploadPage() {
                         />
                         {uploadState !== "success" && (
                           <div className="absolute inset-0 bg-slate-950/60 flex items-center justify-center">
-                            <Loader2 className="w-6 h-6 text-amber-500 animate-spin" />
+                            <Loader2 className="w-5 h-5 text-amber-500 animate-spin" />
+                          </div>
+                        )}
+                        {uploadState === "success" && (
+                          <div className="absolute inset-0 bg-emerald-500/20 flex items-center justify-center">
+                            <CheckCircle className="w-5 h-5 text-emerald-500" />
                           </div>
                         )}
                       </div>
                     ))}
                     {selectedFiles.length > 3 && (
-                      <div className="w-20 h-28 rounded-lg bg-slate-800 flex items-center justify-center">
+                      <div className="w-16 h-22 md:w-20 md:h-28 rounded-lg bg-slate-800 flex items-center justify-center">
                         <span className="text-slate-400 text-sm">
                           +{selectedFiles.length - 3}
                         </span>
@@ -405,43 +467,68 @@ export default function UploadPage() {
                 </div>
               )}
 
-              {/* Progress */}
+              {/* Progress Ring */}
+              {uploadState !== "success" && (
+                <div className="flex flex-col items-center gap-3 mb-6">
+                  <div className="relative">
+                    <div className="w-16 h-16 rounded-full border-4 border-slate-800">
+                      <div className="w-full h-full rounded-full border-4 border-amber-500 border-t-transparent animate-spin" />
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-white font-medium">
+                      {uploadState === "uploading" ? "Uploading..." : "Processing with AI..."}
+                    </p>
+                    <p className="text-slate-500 text-sm mt-0.5">This takes a few seconds</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Progress Bar */}
               <div className="max-w-xs mx-auto mb-6">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm text-slate-400">
-                    {uploadState === "uploading" && "Uploading..."}
-                    {uploadState === "processing" && "Processing with AI..."}
-                    {uploadState === "success" && "Completed!"}
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-xs text-slate-500">
+                    {uploadState === "success" ? "Done" : "Processing"}
                   </span>
-                  <span className="text-sm font-medium text-amber-500">
+                  <span className="text-xs font-medium text-amber-500">
                     {progress}%
                   </span>
                 </div>
-                <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
+                <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
                   <motion.div
                     initial={{ width: 0 }}
                     animate={{ width: `${progress}%` }}
+                    transition={{ ease: "easeOut" }}
                     className={cn(
-                      "h-full rounded-full transition-colors",
-                      uploadState === "success" ? "bg-emerald-500" : "bg-amber-500"
+                      "h-full rounded-full",
+                      uploadState === "success"
+                        ? "bg-gradient-to-r from-emerald-500 to-emerald-400"
+                        : "bg-gradient-to-r from-amber-500 to-amber-400"
                     )}
                   />
                 </div>
               </div>
 
-              {/* Status */}
+              {/* Success State */}
               {uploadState === "success" && processedExpense && (
                 <motion.div
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ delay: 0.2 }}
                   className="space-y-4"
                 >
-                  <div className="flex items-center justify-center gap-2 text-emerald-500">
-                    <CheckCircle className="w-5 h-5" />
-                    <span className="font-medium">Receipt processed!</span>
+                  <div className="flex items-center justify-center gap-2">
+                    <motion.div
+                      initial={{ scale: 0 }}
+                      animate={{ scale: 1 }}
+                      transition={{ type: "spring", stiffness: 300, damping: 20, delay: 0.3 }}
+                    >
+                      <CheckCircle className="w-6 h-6 text-emerald-500" />
+                    </motion.div>
+                    <span className="font-semibold text-emerald-400">Receipt processed!</span>
                   </div>
 
-                  {/* Bank Match Found Banner */}
+                  {/* Bank Match Banner */}
                   {processedExpense.receipt_linked && (
                     <div className="p-3 rounded-xl bg-blue-500/10 border border-blue-500/20 text-left max-w-sm mx-auto">
                       <div className="flex items-start gap-2">
@@ -451,37 +538,35 @@ export default function UploadPage() {
                         <div>
                           <p className="text-blue-300 text-sm font-medium">Linked to bank transaction</p>
                           <p className="text-blue-400/70 text-xs mt-0.5">
-                            This receipt matched an existing bank import record. 
-                            Receipt image and tax details (GST/HST/PST) have been added to the bank record.
+                            Receipt matched to existing bank import. Tax details added.
                           </p>
                         </div>
                       </div>
                     </div>
                   )}
 
-                  {/* Quick Preview */}
+                  {/* Quick Preview Card */}
                   <div className="p-4 rounded-xl bg-slate-800/50 text-left max-w-sm mx-auto">
-                    <div className="space-y-2">
-                      <div className="flex justify-between">
-                        <span className="text-slate-400">Vendor</span>
+                    <div className="space-y-2.5">
+                      <div className="flex justify-between items-center">
+                        <span className="text-slate-400 text-sm">Vendor</span>
                         <span className="text-white font-medium">
                           {processedExpense.vendor_name || "Unknown"}
                         </span>
                       </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-400">Amount</span>
-                        <span className="text-white font-medium">
+                      <div className="flex justify-between items-center">
+                        <span className="text-slate-400 text-sm">Amount</span>
+                        <span className="text-xl font-bold text-white">
                           {formatCurrency(processedExpense.cad_amount)}
                         </span>
                       </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-400">Category</span>
-                        <span className="text-white font-medium">
+                      <div className="flex justify-between items-center">
+                        <span className="text-slate-400 text-sm">Category</span>
+                        <span className="text-white font-medium text-sm">
                           {categoryLabels[processedExpense.category] ||
                             processedExpense.category}
                         </span>
                       </div>
-                      {/* Tax breakdown from receipt */}
                       {(processedExpense.gst_amount > 0 || processedExpense.hst_amount > 0 || processedExpense.pst_amount > 0) && (
                         <>
                           <div className="border-t border-slate-700 pt-2">
@@ -516,47 +601,63 @@ export default function UploadPage() {
                     </div>
                   </div>
 
-                  <div className="flex items-center justify-center gap-3">
-                    <button onClick={reset} className="btn-ghost">
+                  {/* Actions */}
+                  <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+                    <button onClick={reset} className="btn-ghost text-sm">
                       <RotateCcw className="w-4 h-4" />
-                      Upload New Receipt
+                      Upload Another
                     </button>
-                    <button
+                    <motion.button
+                      whileTap={{ scale: 0.97 }}
                       onClick={() => setShowReviewModal(true)}
                       className="btn-primary"
                     >
                       Review & Approve
                       <ArrowRight className="w-4 h-4" />
-                    </button>
+                    </motion.button>
                   </div>
                 </motion.div>
               )}
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-      {/* Tips */}
-      <div className="mt-8 p-6 rounded-2xl bg-slate-800/30 border border-slate-800">
-        <h3 className="font-semibold text-white mb-3">Tips</h3>
-        <ul className="space-y-2 text-slate-400 text-sm">
-          <li className="flex items-start gap-2">
-            <span className="text-amber-500">•</span>
-            For long receipts, you can take multiple photos in parts
-          </li>
-          <li className="flex items-start gap-2">
-            <span className="text-amber-500">•</span>
-            Pay attention to image order (top to bottom)
-          </li>
-          <li className="flex items-start gap-2">
-            <span className="text-amber-500">•</span>
-            Light and clarity quality is important
-          </li>
-          <li className="flex items-start gap-2">
-            <span className="text-amber-500">•</span>
-            Total and date must be clearly visible
-          </li>
-        </ul>
+      {/* Tips — collapsible on mobile */}
+      <div className="mt-6">
+        <button
+          onClick={() => setShowTips(!showTips)}
+          className="md:hidden w-full flex items-center justify-between p-3 rounded-xl bg-slate-800/30 border border-slate-800 text-sm"
+        >
+          <span className="text-slate-400 font-medium">Tips for best results</span>
+          <ChevronDown className={cn("w-4 h-4 text-slate-500 transition-transform", showTips && "rotate-180")} />
+        </button>
+        <div className={cn(
+          "md:block mt-2 md:mt-0",
+          showTips ? "block" : "hidden"
+        )}>
+          <div className="p-4 md:p-6 rounded-2xl bg-slate-800/30 border border-slate-800">
+            <h3 className="font-semibold text-white mb-3 hidden md:block">Tips</h3>
+            <ul className="space-y-2 text-slate-400 text-sm">
+              <li className="flex items-start gap-2">
+                <span className="text-amber-500">•</span>
+                For long receipts, take multiple photos in parts
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-amber-500">•</span>
+                Images are processed in order — top to bottom
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-amber-500">•</span>
+                Good lighting and clarity improve accuracy
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-amber-500">•</span>
+                Total and date must be clearly visible
+              </li>
+            </ul>
+          </div>
+        </div>
       </div>
 
       {/* Review Modal */}

@@ -1,7 +1,13 @@
 import type { Metadata, Viewport } from "next";
-import { Outfit, JetBrains_Mono, Space_Grotesk } from "next/font/google";
+import { Inter, Outfit, JetBrains_Mono, Space_Grotesk } from "next/font/google";
 import "./globals.css";
 import { Providers } from "@/components/providers";
+
+const inter = Inter({
+  subsets: ["latin"],
+  variable: "--font-inter",
+  display: "swap",
+});
 
 const outfit = Outfit({
   subsets: ["latin"],
@@ -52,7 +58,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${outfit.variable} ${jetbrainsMono.variable} ${spaceGrotesk.variable}`}
+      className={`${inter.variable} ${outfit.variable} ${jetbrainsMono.variable} ${spaceGrotesk.variable}`}
     >
       <head>
         <link rel="apple-touch-icon" href="/icons/icon-192x192.png" />
