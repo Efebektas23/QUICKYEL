@@ -104,7 +104,7 @@ export interface Revenue {
 // Helper to convert Firestore timestamp/string to Date (timezone-safe)
 const toDate = (timestamp: any): Date => {
   if (!timestamp) return new Date();
-  
+
   if (timestamp instanceof Timestamp) {
     return timestamp.toDate();
   }
@@ -122,7 +122,7 @@ const toDate = (timestamp: any): Date => {
 // Helper to format date as ISO string (YYYY-MM-DD) for storage
 const toISODateString = (date: Date | string | null): string | null => {
   if (!date) return null;
-  
+
   if (typeof date === 'string') {
     // Already a string, validate format
     if (date.match(/^\d{4}-\d{2}-\d{2}$/)) {
@@ -130,7 +130,7 @@ const toISODateString = (date: Date | string | null): string | null => {
     }
     date = new Date(date);
   }
-  
+
   // Format as YYYY-MM-DD using local date parts (no timezone shift)
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -147,14 +147,14 @@ export const storageApi = {
   uploadReceipt: async (file: File): Promise<string> => {
     // Ensure authenticated before upload
     await ensureAuth();
-    
+
     const timestamp = Date.now();
     const fileName = `receipts/${timestamp}_${file.name}`;
     const storageRef = ref(storage, fileName);
-    
+
     await uploadBytes(storageRef, file);
     const downloadURL = await getDownloadURL(storageRef);
-    
+
     return downloadURL;
   },
 
@@ -208,11 +208,11 @@ export const expensesApi = {
     await ensureAuth();
     const docRef = doc(db, EXPENSES_COLLECTION, id);
     const docSnap = await getDoc(docRef);
-    
+
     if (!docSnap.exists()) {
       return null;
     }
-    
+
     const data = docSnap.data();
     return {
       id: docSnap.id,
@@ -226,8 +226,8 @@ export const expensesApi = {
   /**
    * List all expenses
    */
-  list: async (params?: { 
-    per_page?: number; 
+  list: async (params?: {
+    per_page?: number;
     page?: number;
     category?: string;
     start_date?: string;
@@ -240,10 +240,10 @@ export const expensesApi = {
       orderBy("created_at", "desc"),
       limit(params?.per_page || 50)
     );
-    
+
     const querySnapshot = await getDocs(q);
     const expenses: Expense[] = [];
-    
+
     querySnapshot.forEach((docSnap) => {
       const data = docSnap.data();
       expenses.push({
@@ -254,7 +254,7 @@ export const expensesApi = {
         updated_at: toDate(data.updated_at),
       } as Expense);
     });
-    
+
     return { expenses, total: expenses.length };
   },
 
@@ -290,7 +290,7 @@ export const expensesApi = {
     if (expense?.receipt_image_url) {
       await storageApi.deleteReceipt(expense.receipt_image_url);
     }
-    
+
     // Clean up any receipt hashes associated with this expense
     // so the same receipt can be re-uploaded later
     try {
@@ -305,7 +305,7 @@ export const expensesApi = {
     } catch (err) {
       console.warn("Could not clean up receipt hashes:", err);
     }
-    
+
     const docRef = doc(db, EXPENSES_COLLECTION, id);
     await deleteDoc(docRef);
   },
@@ -317,7 +317,7 @@ export const expensesApi = {
    */
   uploadMultiple: async (files: File[], skipDuplicateCheck = false): Promise<Expense> => {
     console.log(`📤 Starting upload for ${files.length} file(s)${skipDuplicateCheck ? " (duplicate check skipped)" : ""}`);
-    
+
     // 0. Check for exact file duplicate (same image file uploaded before)
     const primaryFileHash = await computeReceiptHash(files[0]);
     if (!skipDuplicateCheck) {
@@ -345,9 +345,9 @@ export const expensesApi = {
       }
     } else {
       // User overriding - clean up any existing hash for this file so we can re-register
-      try { await deleteDoc(doc(db, IMPORT_HASHES_COLLECTION, primaryFileHash)); } catch {}
+      try { await deleteDoc(doc(db, IMPORT_HASHES_COLLECTION, primaryFileHash)); } catch { }
     }
-    
+
     // 1. Upload all images to Firebase Storage
     const imageUrls: string[] = [];
     try {
@@ -362,7 +362,7 @@ export const expensesApi = {
       console.error("❌ Firebase Storage error:", storageError);
       throw new Error(`Firebase Storage hatası: ${storageError.message}`);
     }
-    
+
     // 2. Create initial expense record in Firestore
     let expenseId: string;
     try {
@@ -386,7 +386,7 @@ export const expensesApi = {
       console.error("❌ Firestore error:", firestoreError);
       throw new Error(`Firestore hatası: ${firestoreError.message}`);
     }
-    
+
     try {
       // 3. Send to backend for OCR + Gemini processing (with all image URLs)
       console.log("🤖 Sending to backend for processing...");
@@ -401,122 +401,24 @@ export const expensesApi = {
           image_urls: imageUrls, // Send all URLs for multi-image processing
         }),
       });
-      
+
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(errorData.detail || "Backend processing failed");
       }
-      
+
       const result = await response.json();
       console.log("✅ Backend processing complete:", result);
-      
-      // 3.5 Check for duplicate receipt (different photo of same receipt)
-      // Uses a scoring system: amount + date is already strong evidence,
-      // vendor match is a bonus. This catches camera re-takes of same receipt.
+
+      // 3.5 Check for matching bank_import expense FIRST (reverse matching)
+      // If the user already imported a bank CSV, find the matching transaction.
+      // This MUST run before duplicate detection so bank matches aren't mistaken for duplicates.
       const parsedAmount = result.cad_amount || result.total_amount || 0;
       const parsedDateStr = result.transaction_date || "";
       const parsedVendor = (result.vendor_name || "").toLowerCase().trim();
-      
-      if (parsedAmount > 0 && !skipDuplicateCheck) {
-        console.log("🔍 Checking for duplicate receipt data...");
-        console.log(`   Parsed: vendor="${parsedVendor}" amount=${parsedAmount} date="${parsedDateStr}"`);
-        try {
-          const allExpSnap = await getDocs(collection(db, EXPENSES_COLLECTION));
-          
-          for (const existingDoc of allExpSnap.docs) {
-            if (existingDoc.id === expenseId) continue; // Skip our placeholder
-            const data = existingDoc.data();
-            
-            // Only check expenses that have receipt images (uploaded via OCR/receipt)
-            if (!data.receipt_image_url) continue;
-            
-            const existingAmount = data.cad_amount || 0;
-            const existingDateRaw = data.transaction_date;
-            const existingDate = existingDateRaw
-              ? (typeof existingDateRaw === "string"
-                ? existingDateRaw.substring(0, 10) // Take YYYY-MM-DD part
-                : "")
-              : "";
-            const existingVendor = (data.vendor_name || "").toLowerCase().trim();
-            
-            // Score-based duplicate detection
-            // Only exact amount counts - gas stations (Petro Canada, etc.) often have
-            // many similar amounts; "within $1" caused too many false positives.
-            let score = 0;
-            const reasons: string[] = [];
-            
-            const amountDiff = Math.abs(parsedAmount - existingAmount);
-            if (amountDiff < 0.05) {
-              score += 50; // Exact amount required for duplicate
-              reasons.push("exact amount");
-            } else {
-              continue; // Amount must match exactly - skip
-            }
-            
-            // Date check: same date is strong evidence
-            const parsedDateNorm = parsedDateStr.substring(0, 10); // YYYY-MM-DD
-            if (existingDate && parsedDateNorm && existingDate === parsedDateNorm) {
-              score += 40; // Same date
-              reasons.push("same date");
-            } else if (existingDate && parsedDateNorm) {
-              // Check within 1 day (posting date vs transaction date)
-              const d1 = new Date(existingDate);
-              const d2 = new Date(parsedDateNorm);
-              const daysDiff = Math.abs((d1.getTime() - d2.getTime()) / (1000 * 60 * 60 * 24));
-              if (daysDiff <= 1) {
-                score += 25;
-                reasons.push("date ±1 day");
-              }
-            }
-            
-            // Vendor check: bonus points
-            if (parsedVendor && existingVendor) {
-              if (parsedVendor === existingVendor) {
-                score += 20;
-                reasons.push("exact vendor");
-              } else {
-                const rWords = parsedVendor.split(/[\s,.\-\/]+/).filter((w: string) => w.length > 2);
-                const eWords = existingVendor.split(/[\s,.\-\/]+/).filter((w: string) => w.length > 2);
-                const hasCommon = rWords.some((rw: string) =>
-                  eWords.some((ew: string) => ew.includes(rw) || rw.includes(ew))
-                );
-                if (hasCommon) {
-                  score += 10;
-                  reasons.push("vendor partial match");
-                }
-              }
-            }
-            
-            // Threshold: score >= 70 means high confidence duplicate
-            // (exact amount + same date = 90, exact amount + date±1 = 75)
-            if (score >= 70) {
-              console.log(`⚠️ Duplicate receipt detected (score: ${score})! Matches expense ${existingDoc.id}: ${data.vendor_name} $${existingAmount} [${reasons.join(", ")}]`);
-              
-              // Clean up: delete uploaded images and placeholder expense
-              for (const url of imageUrls) {
-                try { await storageApi.deleteReceipt(url); } catch {}
-              }
-              await deleteDoc(doc(db, EXPENSES_COLLECTION, expenseId));
-              
-              throw new Error(
-                `DUPLICATE_RECEIPT: This receipt appears to have been uploaded before. ` +
-                `Matching expense: ${data.vendor_name || "Unknown"} - $${existingAmount.toFixed(2)} on ${existingDate}`
-              );
-            }
-          }
-        } catch (dupErr: any) {
-          if (dupErr.message?.startsWith("DUPLICATE_RECEIPT")) throw dupErr;
-          console.warn("Duplicate check failed, continuing:", dupErr);
-        }
-      }
-      
-      // 4. Check for matching bank_import expense (reverse matching)
-      // If the user already imported a bank CSV, find the matching transaction
-      const receiptAmount = result.cad_amount || result.total_amount || 0;
       const receiptDate = result.transaction_date ? new Date(result.transaction_date) : null;
-      const receiptVendor = (result.vendor_name || "").toLowerCase();
-      
-      if (receiptAmount > 0 && receiptDate) {
+
+      if (parsedAmount > 0 && receiptDate) {
         console.log("🔍 Checking for matching bank import expense...");
         try {
           const bankExpQ = query(
@@ -524,16 +426,17 @@ export const expensesApi = {
             where("entry_type", "==", "bank_import")
           );
           const bankExpSnap = await getDocs(bankExpQ);
-          
+
           let bestMatchId = "";
           let bestMatchData: Record<string, any> = {};
           let bestMatchScore = 0;
-          
+          let bestMatchReason = "";
+
           for (const docSnap of bankExpSnap.docs) {
             const data = docSnap.data();
             // Skip already receipt-linked records
             if (data.receipt_linked || data.receipt_image_url) continue;
-            
+
             const bankAmount = data.cad_amount || 0;
             const bankDate = data.transaction_date
               ? (typeof data.transaction_date === "string"
@@ -541,45 +444,47 @@ export const expensesApi = {
                 : data.transaction_date.toDate?.() || new Date(data.transaction_date))
               : null;
             const bankVendor = (data.vendor_name || "").toLowerCase();
-            
+
             // Amount check
-            const amountDiff = Math.abs(receiptAmount - bankAmount);
-            const amountPct = receiptAmount > 0 ? (amountDiff / receiptAmount) * 100 : 100;
+            const amountDiff = Math.abs(parsedAmount - bankAmount);
+            const amountPct = parsedAmount > 0 ? (amountDiff / parsedAmount) * 100 : 100;
             if (amountDiff >= 1.0 && amountPct >= 2) continue;
-            
+
             // Date check
             if (!bankDate) continue;
             const daysDiff = Math.abs((receiptDate.getTime() - bankDate.getTime()) / (1000 * 60 * 60 * 24));
             if (daysDiff > 7) continue;
-            
+
             // Score
             let score = 0;
-            if (amountDiff < 0.02) score += 50;
-            else if (amountDiff < 1.0) score += 40;
-            else score += 25;
-            
-            if (daysDiff < 1) score += 30;
-            else if (daysDiff <= 3) score += 20;
-            else score += 10;
-            
+            const reasons: string[] = [];
+            if (amountDiff < 0.02) { score += 50; reasons.push("exact amount"); }
+            else if (amountDiff < 1.0) { score += 40; reasons.push("close amount"); }
+            else { score += 25; reasons.push("similar amount"); }
+
+            if (daysDiff < 1) { score += 30; reasons.push("same day"); }
+            else if (daysDiff <= 3) { score += 20; reasons.push("date ±3 days"); }
+            else { score += 10; reasons.push("date ±7 days"); }
+
             // Vendor match
-            if (receiptVendor && bankVendor) {
-              const rWords = receiptVendor.split(/[\s,.\-\/]+/).filter((w: string) => w.length > 2);
+            if (parsedVendor && bankVendor) {
+              const rWords = parsedVendor.split(/[\s,.\-\/]+/).filter((w: string) => w.length > 2);
               const bWords = bankVendor.split(/[\s,.\-\/]+/).filter((w: string) => w.length > 2);
-              if (receiptVendor === bankVendor) score += 20;
-              else if (rWords.some((rw: string) => bWords.some((bw: string) => bw.includes(rw) || rw.includes(bw)))) score += 10;
+              if (parsedVendor === bankVendor) { score += 20; reasons.push("exact vendor"); }
+              else if (rWords.some((rw: string) => bWords.some((bw: string) => bw.includes(rw) || rw.includes(bw)))) { score += 10; reasons.push("vendor partial"); }
             }
-            
+
             if (score >= 60 && score > bestMatchScore) {
               bestMatchId = docSnap.id;
               bestMatchData = data;
               bestMatchScore = score;
+              bestMatchReason = reasons.join(", ");
             }
           }
-          
+
           if (bestMatchId) {
             console.log(`✅ Found matching bank expense (score: ${bestMatchScore}), linking receipt to it`);
-            
+
             // Update the existing bank_import expense with receipt data
             await expensesApi.update(bestMatchId, {
               // Receipt visual archive
@@ -599,29 +504,131 @@ export const expensesApi = {
               // Link flags
               receipt_linked: true,
               receipt_linked_date: new Date(),
+              bank_match_score: bestMatchScore,
+              bank_match_reason: bestMatchReason,
               is_verified: false, // Needs user review
               processing_status: "completed",
             });
-            
+
             // Delete the placeholder expense we created at step 2
             await deleteDoc(doc(db, EXPENSES_COLLECTION, expenseId));
             console.log(`🗑️ Deleted placeholder expense ${expenseId}, using bank record ${bestMatchId}`);
-            
+
             // Register receipt file hash for future duplicate detection
             try {
               await setDoc(doc(db, IMPORT_HASHES_COLLECTION, primaryFileHash), {
                 type: 'receipt', filename: files[0].name, expense_id: bestMatchId,
                 imported_at: Timestamp.fromDate(new Date()),
               });
-            } catch {}
-            
+            } catch { }
+
             return (await expensesApi.get(bestMatchId))!;
           }
         } catch (matchErr) {
           console.warn("Bank matching check failed, continuing with new expense:", matchErr);
         }
       }
-      
+
+      // 4. Check for duplicate receipt (different photo of same receipt)
+      // Uses a scoring system: amount + date is already strong evidence,
+      // vendor match is a bonus. This catches camera re-takes of same receipt.
+      // NOTE: This runs AFTER bank matching so bank transactions aren't false-positive duplicates.
+      if (parsedAmount > 0 && !skipDuplicateCheck) {
+        console.log("🔍 Checking for duplicate receipt data...");
+        console.log(`   Parsed: vendor="${parsedVendor}" amount=${parsedAmount} date="${parsedDateStr}"`);
+        try {
+          const allExpSnap = await getDocs(collection(db, EXPENSES_COLLECTION));
+
+          for (const existingDoc of allExpSnap.docs) {
+            if (existingDoc.id === expenseId) continue; // Skip our placeholder
+            const data = existingDoc.data();
+
+            // Only check expenses that have receipt images (uploaded via OCR/receipt)
+            if (!data.receipt_image_url) continue;
+
+            // Don't treat bank imports as duplicates — they're match candidates handled above
+            if (data.entry_type === "bank_import") continue;
+
+            const existingAmount = data.cad_amount || 0;
+            const existingDateRaw = data.transaction_date;
+            const existingDate = existingDateRaw
+              ? (typeof existingDateRaw === "string"
+                ? existingDateRaw.substring(0, 10) // Take YYYY-MM-DD part
+                : "")
+              : "";
+            const existingVendor = (data.vendor_name || "").toLowerCase().trim();
+
+            // Score-based duplicate detection
+            // Only exact amount counts - gas stations (Petro Canada, etc.) often have
+            // many similar amounts; "within $1" caused too many false positives.
+            let score = 0;
+            const reasons: string[] = [];
+
+            const amountDiff = Math.abs(parsedAmount - existingAmount);
+            if (amountDiff < 0.05) {
+              score += 50; // Exact amount required for duplicate
+              reasons.push("exact amount");
+            } else {
+              continue; // Amount must match exactly - skip
+            }
+
+            // Date check: same date is strong evidence
+            const parsedDateNorm = parsedDateStr.substring(0, 10); // YYYY-MM-DD
+            if (existingDate && parsedDateNorm && existingDate === parsedDateNorm) {
+              score += 40; // Same date
+              reasons.push("same date");
+            } else if (existingDate && parsedDateNorm) {
+              // Check within 1 day (posting date vs transaction date)
+              const d1 = new Date(existingDate);
+              const d2 = new Date(parsedDateNorm);
+              const daysDiff = Math.abs((d1.getTime() - d2.getTime()) / (1000 * 60 * 60 * 24));
+              if (daysDiff <= 1) {
+                score += 25;
+                reasons.push("date ±1 day");
+              }
+            }
+
+            // Vendor check: bonus points
+            if (parsedVendor && existingVendor) {
+              if (parsedVendor === existingVendor) {
+                score += 20;
+                reasons.push("exact vendor");
+              } else {
+                const rWords = parsedVendor.split(/[\s,.\-\/]+/).filter((w: string) => w.length > 2);
+                const eWords = existingVendor.split(/[\s,.\-\/]+/).filter((w: string) => w.length > 2);
+                const hasCommon = rWords.some((rw: string) =>
+                  eWords.some((ew: string) => ew.includes(rw) || rw.includes(ew))
+                );
+                if (hasCommon) {
+                  score += 10;
+                  reasons.push("vendor partial match");
+                }
+              }
+            }
+
+            // Threshold: score >= 70 means high confidence duplicate
+            // (exact amount + same date = 90, exact amount + date±1 = 75)
+            if (score >= 70) {
+              console.log(`⚠️ Duplicate receipt detected (score: ${score})! Matches expense ${existingDoc.id}: ${data.vendor_name} $${existingAmount} [${reasons.join(", ")}]`);
+
+              // Clean up: delete uploaded images and placeholder expense
+              for (const url of imageUrls) {
+                try { await storageApi.deleteReceipt(url); } catch { }
+              }
+              await deleteDoc(doc(db, EXPENSES_COLLECTION, expenseId));
+
+              throw new Error(
+                `DUPLICATE_RECEIPT: This receipt appears to have been uploaded before. ` +
+                `Matching expense: ${data.vendor_name || "Unknown"} - $${existingAmount.toFixed(2)} on ${existingDate}`
+              );
+            }
+          }
+        } catch (dupErr: any) {
+          if (dupErr.message?.startsWith("DUPLICATE_RECEIPT")) throw dupErr;
+          console.warn("Duplicate check failed, continuing:", dupErr);
+        }
+      }
+
       // 5. No bank match found - update the new expense with parsed data
       await expensesApi.update(expenseId, {
         vendor_name: result.vendor_name,
@@ -641,17 +648,17 @@ export const expensesApi = {
         processing_status: "completed",
         entry_type: "ocr",
       });
-      
+
       // Register receipt file hash for future duplicate detection
       try {
         await setDoc(doc(db, IMPORT_HASHES_COLLECTION, primaryFileHash), {
           type: 'receipt', filename: files[0].name, expense_id: expenseId,
           imported_at: Timestamp.fromDate(new Date()),
         });
-      } catch {}
-      
+      } catch { }
+
       return (await expensesApi.get(expenseId))!;
-      
+
     } catch (error: any) {
       console.error("❌ Processing error:", error);
       if (error.message?.startsWith("DUPLICATE_RECEIPT")) {
@@ -678,7 +685,7 @@ export const expensesApi = {
    */
   uploadLegacy: async (file: File): Promise<Expense> => {
     console.log("📤 Starting upload for file:", file.name);
-    
+
     // 1. Upload image to Firebase Storage
     let imageUrl: string;
     try {
@@ -688,7 +695,7 @@ export const expensesApi = {
       console.error("❌ Firebase Storage error:", storageError);
       throw new Error(`Firebase Storage hatası: ${storageError.message}`);
     }
-    
+
     // 2. Create initial expense record in Firestore
     let expenseId: string;
     try {
@@ -711,7 +718,7 @@ export const expensesApi = {
       console.error("❌ Firestore error:", firestoreError);
       throw new Error(`Firestore hatası: ${firestoreError.message}`);
     }
-    
+
     try {
       // 3. Send to backend for OCR + Gemini processing
       console.log("🤖 Sending to backend for processing...");
@@ -725,15 +732,15 @@ export const expensesApi = {
           image_url: imageUrl,
         }),
       });
-      
+
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(errorData.detail || "Backend processing failed");
       }
-      
+
       const result = await response.json();
       console.log("✅ Backend processing complete:", result);
-      
+
       // 4. Update expense with parsed data (store date as ISO string to avoid timezone issues)
       await expensesApi.update(expenseId, {
         vendor_name: result.vendor_name,
@@ -752,10 +759,10 @@ export const expensesApi = {
         raw_ocr_text: result.raw_text,
         processing_status: "completed",
       });
-      
+
       // Return updated expense
       return (await expensesApi.get(expenseId))!;
-      
+
     } catch (error: any) {
       console.error("❌ Processing error:", error);
       // Update with error
@@ -763,7 +770,7 @@ export const expensesApi = {
         processing_status: "error",
         error_message: error.message,
       });
-      
+
       throw error;
     }
   },
@@ -775,7 +782,7 @@ export const cardsApi = {
   list: async (): Promise<Card[]> => {
     const q = query(collection(db, CARDS_COLLECTION), orderBy("created_at", "desc"));
     const querySnapshot = await getDocs(q);
-    
+
     const cards: Card[] = [];
     querySnapshot.forEach((docSnap) => {
       const data = docSnap.data();
@@ -785,7 +792,7 @@ export const cardsApi = {
         created_at: toDate(data.created_at),
       } as Card);
     });
-    
+
     return cards;
   },
 
@@ -833,11 +840,11 @@ export const revenueApi = {
     await ensureAuth();
     const docRef = doc(db, REVENUE_COLLECTION, id);
     const docSnap = await getDoc(docRef);
-    
+
     if (!docSnap.exists()) {
       return null;
     }
-    
+
     const data = docSnap.data();
     return {
       id: docSnap.id,
@@ -858,10 +865,10 @@ export const revenueApi = {
       orderBy("date", "desc"),
       limit(params?.per_page || 100)
     );
-    
+
     const querySnapshot = await getDocs(q);
     const revenues: Revenue[] = [];
-    
+
     querySnapshot.forEach((docSnap) => {
       const data = docSnap.data();
       revenues.push({
@@ -872,7 +879,7 @@ export const revenueApi = {
         updated_at: toDate(data.updated_at),
       } as Revenue);
     });
-    
+
     return { revenues, total: revenues.length };
   },
 
@@ -902,7 +909,7 @@ export const revenueApi = {
         console.error("Error deleting revenue image:", e);
       }
     }
-    
+
     const docRef = doc(db, REVENUE_COLLECTION, id);
     await deleteDoc(docRef);
   },
@@ -915,10 +922,10 @@ export const revenueApi = {
     const timestamp = Date.now();
     const fileName = `revenue_docs/${timestamp}_${file.name}`;
     const storageRef = ref(storage, fileName);
-    
+
     await uploadBytes(storageRef, file);
     const downloadURL = await getDownloadURL(storageRef);
-    
+
     return downloadURL;
   },
 
@@ -938,25 +945,25 @@ export const revenueApi = {
     // Import centralized API URL configuration
     const { API_URL } = await import("./runtime-config");
     const url = `${API_URL}/api/process-rate-confirmation/`;
-    
+
     console.log("🌐 Calling backend API:", url);
     console.log("🌐 Request payload:", { image_url: imageUrl });
-    
+
     try {
       const response = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ image_url: imageUrl }),
       });
-      
+
       console.log("🌐 Response status:", response.status, response.statusText);
-      
+
       if (!response.ok) {
         const errorText = await response.text();
         console.error("🌐 Error response body:", errorText);
         throw new Error(`Backend error: ${response.status} - ${errorText}`);
       }
-      
+
       const data = await response.json();
       console.log("🌐 Response data:", data);
       return data;
@@ -981,13 +988,13 @@ export const revenueApi = {
     verified_count: number;
   }> => {
     const { revenues } = await revenueApi.list({ per_page: 1000 });
-    
+
     const verifiedRevenues = revenues.filter(r => r.status === "verified");
-    
+
     // Calculate totals with multi-currency support
     let totalOriginalUsd = 0;
     let totalOriginalCad = 0;
-    
+
     verifiedRevenues.forEach(r => {
       if (r.currency === "USD") {
         totalOriginalUsd += r.amount_original || r.amount_usd || 0;
@@ -995,7 +1002,7 @@ export const revenueApi = {
         totalOriginalCad += r.amount_original || 0;
       }
     });
-    
+
     return {
       // Legacy field for backward compatibility
       total_usd: totalOriginalUsd,
@@ -1018,46 +1025,46 @@ export const revenueApi = {
     try {
       // Format date as YYYY-MM-DD
       const dateStr = date.toISOString().split('T')[0];
-      
+
       console.log(`🏦 Bank of Canada: Fetching exchange rate for ${dateStr}...`);
-      
+
       // Bank of Canada Valet API - try exact date first
       const apiUrl = `https://www.bankofcanada.ca/valet/observations/FXUSDCAD/json?start_date=${dateStr}&end_date=${dateStr}`;
       console.log(`🏦 API URL: ${apiUrl}`);
-      
+
       const response = await fetch(apiUrl);
-      
+
       if (!response.ok) {
         console.warn(`🏦 Bank of Canada API error: ${response.status}`);
         throw new Error("Failed to fetch exchange rate");
       }
-      
+
       const data = await response.json();
       const observations = data.observations;
-      
+
       if (observations && observations.length > 0) {
         const rate = parseFloat(observations[0].FXUSDCAD.v);
         const rateDate = observations[0].d;
         console.log(`🏦 ✅ Rate found for ${rateDate}: 1 USD = ${rate} CAD`);
         return rate;
       }
-      
+
       // If no rate for that date (weekend/holiday), look back up to 7 days to find the closest business day
       console.log(`🏦 ⚠️ No rate for ${dateStr} (weekend/holiday), searching previous business days...`);
-      
+
       // Calculate a date range: from 7 days before to the target date
       const endDate = new Date(date);
       const startDate = new Date(date);
       startDate.setDate(startDate.getDate() - 7);
-      
+
       const startDateStr = startDate.toISOString().split('T')[0];
       const endDateStr = endDate.toISOString().split('T')[0];
-      
+
       const rangeUrl = `https://www.bankofcanada.ca/valet/observations/FXUSDCAD/json?start_date=${startDateStr}&end_date=${endDateStr}`;
       console.log(`🏦 Range API URL: ${rangeUrl}`);
-      
+
       const rangeResponse = await fetch(rangeUrl);
-      
+
       if (rangeResponse.ok) {
         const rangeData = await rangeResponse.json();
         if (rangeData.observations && rangeData.observations.length > 0) {
@@ -1069,13 +1076,13 @@ export const revenueApi = {
           return rate;
         }
       }
-      
+
       // If still no data, use the most recent available rate (for very old dates)
       console.log(`🏦 ⚠️ No rate in range, fetching most recent available...`);
       const fallbackResponse = await fetch(
         `https://www.bankofcanada.ca/valet/observations/FXUSDCAD/json?recent=1`
       );
-      
+
       if (fallbackResponse.ok) {
         const fallbackData = await fallbackResponse.json();
         if (fallbackData.observations && fallbackData.observations.length > 0) {
@@ -1085,7 +1092,7 @@ export const revenueApi = {
           return rate;
         }
       }
-      
+
       // Default fallback rate
       console.warn(`🏦 ⚠️ Using fallback rate: 1.40`);
       return 1.40;
@@ -1690,10 +1697,10 @@ export const bankImportApi = {
         if (txVendor && expVendor) {
           const vendorWords = txVendor.split(/[\s,.\-\/]+/).filter((w: string) => w.length > 2);
           const expWords = expVendor.split(/[\s,.\-\/]+/).filter((w: string) => w.length > 2);
-          const commonWords = vendorWords.filter((w: string) => 
+          const commonWords = vendorWords.filter((w: string) =>
             expWords.some((ew: string) => ew.includes(w) || w.includes(ew))
           );
-          
+
           if (txVendor === expVendor) {
             score += 20;
             reasons.push("exact vendor");
@@ -1772,7 +1779,7 @@ export const bankImportApi = {
         where("entry_type", "==", "bank_import")
       );
       const expSnap = await getDocs(expQ);
-      
+
       let revSnap: any = null;
       try {
         const revQ = query(
@@ -1784,10 +1791,10 @@ export const bankImportApi = {
       } catch {
         // If revenue query fails (e.g., no index), skip
       }
-      
+
       // Build a map of fingerprint → { docRef, isBad }
       const recordMap = new Map<string, { ref: any; isBad: boolean }[]>();
-      
+
       expSnap.forEach((docSnap) => {
         const data = docSnap.data();
         const docFp = data.import_fingerprint;
@@ -1799,7 +1806,7 @@ export const bankImportApi = {
           recordMap.get(docFp)!.push({ ref: docSnap.ref, isBad });
         }
       });
-      
+
       if (revSnap) {
         revSnap.forEach((docSnap: any) => {
           const data = docSnap.data();
@@ -1812,14 +1819,14 @@ export const bankImportApi = {
           }
         });
       }
-      
+
       // Determine which fingerprints to clear
       const fingerprintsToRemove: string[] = [];
       const docsToDelete: any[] = [];
-      
+
       existingFingerprints.forEach((fp) => {
         const records = recordMap.get(fp);
-        
+
         if (forceReimport) {
           // Force mode: delete ALL existing records for this fingerprint
           fingerprintsToRemove.push(fp);
@@ -1838,7 +1845,7 @@ export const bankImportApi = {
           }
         }
       });
-      
+
       // Delete bad/old records
       if (docsToDelete.length > 0) {
         console.log(`🔄 Deleting ${docsToDelete.length} old/bad records for re-import...`);
@@ -1846,7 +1853,7 @@ export const bankImportApi = {
           await deleteDoc(docRef);
         }
       }
-      
+
       // Delete stale/bad fingerprints from import_hashes
       if (fingerprintsToRemove.length > 0) {
         console.log(`🔄 Clearing ${fingerprintsToRemove.length} fingerprints for re-import...`);
@@ -1875,7 +1882,7 @@ export const bankImportApi = {
         if (tx.type === "expense") {
           // Check if this transaction matches an existing manually-entered expense
           const match = matchedExpenses?.get(tx.index);
-          
+
           if (match) {
             // LINK to existing expense instead of creating new one
             const expDocRef = doc(db, EXPENSES_COLLECTION, match.expenseId);
@@ -1896,10 +1903,10 @@ export const bankImportApi = {
             const isUsd = !tx.amount_cad && tx.amount_usd != null && tx.amount_usd !== 0;
             const originalAmount = Math.abs(isUsd ? (tx.amount_usd || 0) : (tx.amount_cad || 0));
             const currency = isUsd ? "USD" : "CAD";
-            
+
             let exchangeRate = 1.0;
             let cadAmount = originalAmount;
-            
+
             if (isUsd) {
               try {
                 const txDate = tx.transaction_date ? new Date(tx.transaction_date) : new Date();
@@ -1945,10 +1952,10 @@ export const bankImportApi = {
           const isUsd = !tx.amount_cad && tx.amount_usd != null && tx.amount_usd !== 0;
           const originalAmount = Math.abs(isUsd ? (tx.amount_usd || 0) : (tx.amount_cad || 0));
           const currency = isUsd ? "USD" : "CAD";
-          
+
           let exchangeRate = 1.0;
           let cadAmount = originalAmount;
-          
+
           if (isUsd) {
             try {
               const txDate = tx.transaction_date ? new Date(tx.transaction_date) : new Date();
@@ -2094,7 +2101,7 @@ export const factoringApi = {
         where("entry_type", "==", "factoring_import")
       );
       const expSnap = await getDocs(expQ);
-      
+
       // Build a map of fingerprint → records
       const recordMap = new Map<string, { ref: any; isBad: boolean }[]>();
       expSnap.forEach((docSnap) => {
@@ -2107,13 +2114,13 @@ export const factoringApi = {
           recordMap.get(docFp)!.push({ ref: docSnap.ref, isBad });
         }
       });
-      
+
       const fingerprintsToRemove: string[] = [];
       const docsToDelete: any[] = [];
-      
+
       existingFingerprints.forEach((fp) => {
         const records = recordMap.get(fp);
-        
+
         if (forceReimport) {
           fingerprintsToRemove.push(fp);
           if (records) records.forEach((r) => docsToDelete.push(r.ref));
@@ -2128,13 +2135,13 @@ export const factoringApi = {
           }
         }
       });
-      
+
       if (docsToDelete.length > 0) {
         for (const docRef of docsToDelete) {
           await deleteDoc(docRef);
         }
       }
-      
+
       if (fingerprintsToRemove.length > 0) {
         for (const fp of fingerprintsToRemove) {
           const fpDocRef = doc(db, IMPORT_HASHES_COLLECTION, fp);
@@ -2276,7 +2283,7 @@ export const exportApi = {
     verified_only?: boolean;
   }): Promise<Blob> => {
     const allExpenses = await expensesApi.list({ per_page: 1000 });
-    
+
     // Filter expenses
     let expenses = allExpenses.expenses;
     if (params?.verified_only) {
@@ -2291,7 +2298,7 @@ export const exportApi = {
       endDate.setHours(23, 59, 59, 999);
       expenses = expenses.filter(e => e.transaction_date && new Date(e.transaction_date) <= endDate);
     }
-    
+
     // CSV Header
     const headers = [
       "Date",
@@ -2308,23 +2315,23 @@ export const exportApi = {
       "Receipt Link",
       "Notes"
     ];
-    
+
     // CSV Rows
     const rows = expenses.map(expense => {
-      const paymentSource = expense.payment_source === "personal_card" ? "Personal Card" : 
-                           expense.payment_source === "company_card" ? "Company Card" : 
-                           expense.payment_source === "bank_checking" ? "Bank / Checking" :
-                           expense.payment_source === "e_transfer" ? "e-Transfer" : "Unknown";
+      const paymentSource = expense.payment_source === "personal_card" ? "Personal Card" :
+        expense.payment_source === "company_card" ? "Company Card" :
+          expense.payment_source === "bank_checking" ? "Bank / Checking" :
+            expense.payment_source === "e_transfer" ? "e-Transfer" : "Unknown";
       const dueToShareholder = expense.payment_source === "personal_card" ? "Yes" : "No";
-      const jurisdiction = expense.jurisdiction === "canada" ? "CANADA" : 
-                          expense.jurisdiction === "usa" ? "USA" : "UNKNOWN";
+      const jurisdiction = expense.jurisdiction === "canada" ? "CANADA" :
+        expense.jurisdiction === "usa" ? "USA" : "UNKNOWN";
       const taxAmount = (expense.gst_amount && expense.gst_amount > 0) ? expense.gst_amount : (expense.tax_amount || 0);
-      
+
       let notes = expense.notes || "";
       if (expense.category === "meals_entertainment") {
         notes = `50% deductible for CRA. ${notes}`.trim();
       }
-      
+
       return [
         formatExportDate(expense.transaction_date),
         expense.vendor_name || "",
@@ -2341,23 +2348,23 @@ export const exportApi = {
         notes
       ];
     });
-    
+
     // Build Expenses CSV content
     const expensesCsv = [
       "=== EXPENSES ===",
       headers.join(","),
       ...rows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(","))
     ];
-    
+
     // ===== REVENUES =====
     const allRevenues = await revenueApi.list({ per_page: 1000 });
     let revenues = allRevenues.revenues;
-    
+
     // Filter verified only if requested
     if (params?.verified_only) {
       revenues = revenues.filter(r => r.status === "verified");
     }
-    
+
     // Apply date filters to revenues
     if (params?.start_date) {
       const startDate = new Date(params.start_date);
@@ -2368,7 +2375,7 @@ export const exportApi = {
       endDate.setHours(23, 59, 59, 999);
       revenues = revenues.filter(r => r.date && new Date(r.date) <= endDate);
     }
-    
+
     const revenueHeaders = [
       "Date",
       "Broker/Company",
@@ -2381,7 +2388,7 @@ export const exportApi = {
       "Document Link",
       "Notes"
     ];
-    
+
     const revenueRows = revenues.map(revenue => [
       formatExportDate(revenue.date),
       revenue.broker_name || "",
@@ -2394,14 +2401,14 @@ export const exportApi = {
       revenue.image_url || "",
       revenue.notes || ""
     ]);
-    
+
     const revenuesCsv = [
       "",
       "=== REVENUES ===",
       revenueHeaders.join(","),
       ...revenueRows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(","))
     ];
-    
+
     // ===== SUMMARY =====
     const totalExpensesCAD = expenses.reduce((sum, e) => sum + (e.cad_amount || 0), 0);
     const totalRevenueCAD = revenues.reduce((sum, r) => sum + (r.amount_cad || 0), 0);
@@ -2410,7 +2417,7 @@ export const exportApi = {
       const gst = (e.gst_amount && e.gst_amount > 0) ? e.gst_amount : (e.tax_amount || 0);
       return sum + gst;
     }, 0);
-    
+
     const summaryCsv = [
       "",
       "=== SUMMARY ===",
@@ -2421,10 +2428,10 @@ export const exportApi = {
       `"Expense Count","${expenses.length}"`,
       `"Revenue Count","${revenues.length}"`
     ];
-    
+
     // Combine all sections
     const csvContent = [...expensesCsv, ...revenuesCsv, ...summaryCsv].join("\n");
-    
+
     return new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
   },
 
@@ -2440,63 +2447,63 @@ export const exportApi = {
     // Get all expenses
     const allExpenses = await expensesApi.list({ per_page: 1000 });
     let expenses = allExpenses.expenses;
-    
+
     // Filter verified only if requested
     if (params?.verified_only) {
       expenses = expenses.filter(e => e.is_verified);
     }
-    
+
     // Apply date filters
     if (params?.start_date) {
       const startDate = new Date(params.start_date);
-      expenses = expenses.filter(e => 
+      expenses = expenses.filter(e =>
         e.transaction_date && new Date(e.transaction_date) >= startDate
       );
     }
     if (params?.end_date) {
       const endDate = new Date(params.end_date);
       endDate.setHours(23, 59, 59, 999);
-      expenses = expenses.filter(e => 
+      expenses = expenses.filter(e =>
         e.transaction_date && new Date(e.transaction_date) <= endDate
       );
     }
-    
+
     // Prepare data for Excel with separate tax columns
     const excelData = expenses.map(expense => {
       const category = expense.category || "uncategorized";
       const deductionRate = DEDUCTION_RATES[category] ?? 0.0;
       const deductibleAmount = (expense.cad_amount || 0) * deductionRate;
-      
+
       // Get separate tax amounts with backward compatibility
       const gstAmount = expense.gst_amount || 0;
       const hstAmount = expense.hst_amount || 0;
       const pstAmount = expense.pst_amount || 0;
-      
+
       // Backward compatibility: if no separate values, use tax_amount as HST
-      const effectiveHst = (gstAmount === 0 && hstAmount === 0 && expense.tax_amount) 
-        ? expense.tax_amount 
+      const effectiveHst = (gstAmount === 0 && hstAmount === 0 && expense.tax_amount)
+        ? expense.tax_amount
         : hstAmount;
       const totalTax = gstAmount + effectiveHst + pstAmount;
       const taxRecoverable = gstAmount + effectiveHst; // Only GST + HST are ITC recoverable
-      
+
       // Payment source logic
-      const paymentSource = expense.payment_source === "company_card" ? "Company Card" 
+      const paymentSource = expense.payment_source === "company_card" ? "Company Card"
         : expense.payment_source === "personal_card" ? "Personal Card"
-        : expense.payment_source === "bank_checking" ? "Bank / Checking"
-        : expense.payment_source === "e_transfer" ? "e-Transfer"
-        : "Unknown";
-      const dueToShareholder = expense.payment_source === "personal_card" 
-        ? expense.cad_amount || 0 
+          : expense.payment_source === "bank_checking" ? "Bank / Checking"
+            : expense.payment_source === "e_transfer" ? "e-Transfer"
+              : "Unknown";
+      const dueToShareholder = expense.payment_source === "personal_card"
+        ? expense.cad_amount || 0
         : 0;
-      
+
       // Jurisdiction
       const jurisdiction = expense.currency === "USD" ? "USA" : "Canada";
-      
+
       // Notes
-      const notes = deductionRate < 1.0 
-        ? `${(deductionRate * 100).toFixed(0)}% deductible` 
+      const notes = deductionRate < 1.0
+        ? `${(deductionRate * 100).toFixed(0)}% deductible`
         : "";
-      
+
       return {
         "Date": formatExportDate(expense.transaction_date),
         "Vendor": expense.vendor_name || "",
@@ -2520,14 +2527,14 @@ export const exportApi = {
         "Notes": notes
       };
     });
-    
+
     // Create workbook
     const workbook = XLSX.utils.book_new();
-    
+
     // ===== EXPENSES SHEET =====
     const expensesSheet = XLSX.utils.json_to_sheet(excelData);
     XLSX.utils.book_append_sheet(workbook, expensesSheet, "Expenses");
-    
+
     // Set column widths for expenses
     expensesSheet["!cols"] = [
       { wch: 12 },  // Date
@@ -2551,31 +2558,31 @@ export const exportApi = {
       { wch: 50 },  // Receipt URL
       { wch: 20 },  // Notes
     ];
-    
+
     // ===== REVENUES SHEET =====
     const allRevenues = await revenueApi.list({ per_page: 1000 });
     let revenues = allRevenues.revenues;
-    
+
     // Filter verified only if requested
     if (params?.verified_only) {
       revenues = revenues.filter(r => r.status === "verified");
     }
-    
+
     // Apply date filters to revenues
     if (params?.start_date) {
       const startDate = new Date(params.start_date);
-      revenues = revenues.filter(r => 
+      revenues = revenues.filter(r =>
         r.date && new Date(r.date) >= startDate
       );
     }
     if (params?.end_date) {
       const endDate = new Date(params.end_date);
       endDate.setHours(23, 59, 59, 999);
-      revenues = revenues.filter(r => 
+      revenues = revenues.filter(r =>
         r.date && new Date(r.date) <= endDate
       );
     }
-    
+
     // Prepare revenue data for Excel
     const revenueData = revenues.map(revenue => ({
       "Date": formatExportDate(revenue.date),
@@ -2589,10 +2596,10 @@ export const exportApi = {
       "Document URL": revenue.image_url || "",
       "Notes": revenue.notes || ""
     }));
-    
+
     const revenuesSheet = XLSX.utils.json_to_sheet(revenueData);
     XLSX.utils.book_append_sheet(workbook, revenuesSheet, "Revenues");
-    
+
     // Set column widths for revenues
     revenuesSheet["!cols"] = [
       { wch: 12 },  // Date
@@ -2606,7 +2613,7 @@ export const exportApi = {
       { wch: 50 },  // Document URL
       { wch: 30 },  // Notes
     ];
-    
+
     // ===== SUMMARY SHEET =====
     const totalExpensesCAD = expenses.reduce((sum, e) => sum + (e.cad_amount || 0), 0);
     const totalGST = expenses.reduce((sum, e) => sum + (e.gst_amount || 0), 0);
@@ -2625,7 +2632,7 @@ export const exportApi = {
     }, 0);
     const totalRevenueCAD = revenues.reduce((sum, r) => sum + (r.amount_cad || 0), 0);
     const netProfit = totalRevenueCAD - totalExpensesCAD;
-    
+
     const summaryData = [
       { "Metric": "Gross Revenue (CAD)", "Value": totalRevenueCAD.toFixed(2) },
       { "Metric": "Total Expenses (CAD)", "Value": totalExpensesCAD.toFixed(2) },
@@ -2642,53 +2649,53 @@ export const exportApi = {
       { "Metric": "Total Expense Count", "Value": expenses.length.toString() },
       { "Metric": "Total Revenue Count", "Value": revenues.length.toString() },
     ];
-    
+
     const summarySheet = XLSX.utils.json_to_sheet(summaryData);
     XLSX.utils.book_append_sheet(workbook, summarySheet, "Summary");
-    
+
     summarySheet["!cols"] = [
       { wch: 25 },  // Metric
       { wch: 15 },  // Value
     ];
-    
+
     // Generate binary Excel file
-    const excelBuffer = XLSX.write(workbook, { 
-      bookType: "xlsx", 
-      type: "array" 
+    const excelBuffer = XLSX.write(workbook, {
+      bookType: "xlsx",
+      type: "array"
     });
-    
-    return new Blob([excelBuffer], { 
-      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" 
+
+    return new Blob([excelBuffer], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     });
   },
 
   getSummary: async (params?: { start_date?: string; end_date?: string }): Promise<any> => {
     const allExpenses = await expensesApi.list({ per_page: 1000 });
-    
+
     // Only count verified expenses for summary (matching backend behavior)
     let filteredExpenses = allExpenses.expenses.filter(e => e.is_verified);
-    
+
     // Apply date filters if provided
     if (params?.start_date) {
       const startDate = new Date(params.start_date);
-      filteredExpenses = filteredExpenses.filter(e => 
+      filteredExpenses = filteredExpenses.filter(e =>
         e.transaction_date && new Date(e.transaction_date) >= startDate
       );
     }
     if (params?.end_date) {
       const endDate = new Date(params.end_date);
       endDate.setHours(23, 59, 59, 999); // Include the whole end day
-      filteredExpenses = filteredExpenses.filter(e => 
+      filteredExpenses = filteredExpenses.filter(e =>
         e.transaction_date && new Date(e.transaction_date) <= endDate
       );
     }
-    
+
     const expenses = {
       ...allExpenses,
       expenses: filteredExpenses
     };
-    
-    
+
+
     const totals = {
       total_cad: 0,
       expense_count: expenses.expenses.length,
@@ -2700,7 +2707,7 @@ export const exportApi = {
       total_potential_deductions: 0,  // T2125 tax deductions
       meals_50_percent: 0,  // 50% deductible portion of meals
     };
-    
+
     const by_category: Record<string, { total_cad: number; count: number; total_deductible: number; total_gst: number; total_hst: number; total_pst: number; total_tax: number }> = {};
     const by_payment_source: Record<string, number> = {
       company_expenses: 0,
@@ -2714,11 +2721,11 @@ export const exportApi = {
       cad: { original_total: 0, count: 0 },
       usd: { original_total: 0, converted_cad: 0, count: 0, avg_rate: 0 },
     };
-    
+
     expenses.expenses.forEach((expense) => {
       const cadAmount = expense.cad_amount || 0;
       totals.total_cad += cadAmount;
-      
+
       // Track by currency
       const currency = (expense.original_currency || expense.currency || "CAD").toUpperCase();
       if (currency === "USD") {
@@ -2729,33 +2736,33 @@ export const exportApi = {
         by_currency.cad.original_total += expense.original_amount || cadAmount || 0;
         by_currency.cad.count += 1;
       }
-      
+
       // Calculate GST, HST, and PST separately
       // BACKWARD COMPATIBILITY: If gst_amount is 0 or not set, but tax_amount has a value,
       // use tax_amount as GST (for Canadian receipts, tax was typically GST/HST)
       const gstAmount = expense.gst_amount || 0;
       const hstAmount = expense.hst_amount || 0;
       const pstAmount = expense.pst_amount || 0;
-      
+
       // If no separate values, use tax_amount as HST (backward compatibility)
       const effectiveGst = gstAmount;
-      const effectiveHst = (gstAmount === 0 && hstAmount === 0 && expense.tax_amount) 
-        ? expense.tax_amount 
+      const effectiveHst = (gstAmount === 0 && hstAmount === 0 && expense.tax_amount)
+        ? expense.tax_amount
         : hstAmount;
       const effectivePst = pstAmount;
-      
+
       totals.total_gst += effectiveGst;
       totals.total_hst += effectiveHst;
       totals.total_pst += effectivePst;
       totals.total_tax += effectiveGst + effectiveHst + effectivePst;
-      
+
       // Only GST + HST are ITC recoverable (not PST)
       totals.total_tax_recoverable += effectiveGst + effectiveHst;
-      
+
       // Calculate deductible amount for T2125
       const deductibleAmount = calculateDeductibleAmount(expense);
       totals.total_potential_deductions += deductibleAmount;
-      
+
       // By category
       const cat = expense.category || "uncategorized";
       if (!by_category[cat]) {
@@ -2768,7 +2775,7 @@ export const exportApi = {
       by_category[cat].total_hst += effectiveHst;
       by_category[cat].total_pst += effectivePst;
       by_category[cat].total_tax += effectiveGst + effectiveHst + effectivePst;
-      
+
       // By payment source
       if (expense.payment_source === "personal_card") {
         by_payment_source.due_to_shareholder += cadAmount;
@@ -2782,16 +2789,16 @@ export const exportApi = {
         by_payment_source.unknown += cadAmount;
       }
     });
-    
+
     // Calculate 50% deductible for meals (CRA rule)
     const mealsTotal = by_category["meals_entertainment"]?.total_cad || 0;
     totals.meals_50_percent = mealsTotal * 0.5;
-    
+
     // Calculate average exchange rate for USD expenses
     if (by_currency.usd.count > 0 && by_currency.usd.original_total > 0) {
       by_currency.usd.avg_rate = by_currency.usd.converted_cad / by_currency.usd.original_total;
     }
-    
+
     return { totals, by_category, by_payment_source, by_currency };
   },
 };
