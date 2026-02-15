@@ -304,7 +304,7 @@ export default function UploadPage() {
               {/* Process Button */}
               {selectedFiles.length > 0 && (
                 <button
-                  onClick={processFiles}
+                  onClick={() => processFiles()}
                   className="btn-primary w-full mt-4"
                 >
                   <Upload className="w-5 h-5" />
