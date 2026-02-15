@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useDropzone } from "react-dropzone";
 import { motion, AnimatePresence } from "framer-motion";
@@ -44,6 +44,8 @@ export default function UploadPage() {
   const [showReviewModal, setShowReviewModal] = useState(false);
   const [showManualEntryModal, setShowManualEntryModal] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const galleryInputRef = useRef<HTMLInputElement>(null);
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     const newFiles = acceptedFiles.map((file) => ({
@@ -134,39 +136,53 @@ export default function UploadPage() {
     router.push("/expenses");
   };
 
+  const handleFileInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      onDrop(Array.from(e.target.files));
+    }
+    // Reset the input value so the same file can be selected again
+    e.target.value = "";
+  }, [onDrop]);
+
   const triggerCamera = (e?: React.MouseEvent) => {
     e?.stopPropagation();
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = "image/*";
-    input.capture = "environment";
-    input.multiple = true;
-    input.onchange = (ev: any) => {
-      if (ev.target.files) {
-        onDrop(Array.from(ev.target.files));
-      }
-    };
-    input.click();
+    if (cameraInputRef.current) {
+      cameraInputRef.current.value = "";
+      cameraInputRef.current.click();
+    }
   };
 
   const triggerGallery = (e?: React.MouseEvent) => {
     e?.stopPropagation();
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = "image/*";
-    input.multiple = true;
-    input.onchange = (ev: any) => {
-      if (ev.target.files) {
-        onDrop(Array.from(ev.target.files));
-      }
-    };
-    input.click();
+    if (galleryInputRef.current) {
+      galleryInputRef.current.value = "";
+      galleryInputRef.current.click();
+    }
   };
 
   const [showTips, setShowTips] = useState(false);
 
   return (
     <div className="max-w-2xl mx-auto">
+      {/* Persistent hidden file inputs — iOS Safari garbage-collects dynamically created ones */}
+      <input
+        ref={cameraInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        onChange={handleFileInputChange}
+        className="hidden"
+        aria-hidden="true"
+      />
+      <input
+        ref={galleryInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        onChange={handleFileInputChange}
+        className="hidden"
+        aria-hidden="true"
+      />
       {/* Page Header */}
       <div className="text-center mb-6">
         <h1 className="text-2xl md:text-3xl font-bold text-white">Add Expense</h1>
