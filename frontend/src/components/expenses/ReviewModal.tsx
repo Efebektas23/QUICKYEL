@@ -124,7 +124,7 @@ export function ReviewModal({
       gst_amount: expense.gst_amount || 0,
       hst_amount: expense.hst_amount || 0,
       pst_amount: expense.pst_amount || 0,
-      card_last_4: expense.card_last_4 || "",
+      card_last_4: expense.card_last_4 || (expense.payment_source === "bank_checking" ? "checking" : ""),
       notes: expense.notes || "",
     },
   });
@@ -140,7 +140,7 @@ export function ReviewModal({
         gst_amount: expense.gst_amount || 0,
         hst_amount: expense.hst_amount || 0,
         pst_amount: expense.pst_amount || 0,
-        card_last_4: expense.card_last_4 || "",
+        card_last_4: expense.card_last_4 || (expense.payment_source === "bank_checking" ? "checking" : ""),
         notes: expense.notes || "",
       });
     }
@@ -159,10 +159,12 @@ export function ReviewModal({
       await expensesApi.update(expense.id, {
         ...data,
         transaction_date: isoDate,
-        card_last_4: data.card_last_4 || null,
-        payment_source: selectedCard
-          ? (selectedCard.is_company_card ? "company_card" : "personal_card")
-          : expense.payment_source || "unknown",
+        card_last_4: data.card_last_4 === "checking" ? null : (data.card_last_4 || null),
+        payment_source: data.card_last_4 === "checking"
+          ? "bank_checking"
+          : selectedCard
+            ? (selectedCard.is_company_card ? "company_card" : "personal_card")
+            : expense.payment_source || "unknown",
         is_verified: true,
       });
       onSave();
@@ -518,14 +520,17 @@ export function ReviewModal({
                   )}
                 </div>
 
-                {/* Payment Card */}
+                {/* Payment Method */}
                 <div>
                   <label className="flex items-center gap-2 text-sm font-medium text-slate-300 mb-2">
                     <CreditCard className="w-4 h-4" />
-                    Payment Card
+                    Payment Method
                   </label>
                   <select {...register("card_last_4")} className="input-field">
                     <option value="">Not specified</option>
+                    <optgroup label="Bank Account">
+                      <option value="checking">🏦 Checking Account</option>
+                    </optgroup>
                     {cards && (() => {
                       const cadCards = cards.filter((c: any) => c.currency === "CAD");
                       const usdCards = cards.filter((c: any) => c.currency === "USD");
