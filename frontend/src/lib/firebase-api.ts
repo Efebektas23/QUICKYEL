@@ -335,12 +335,12 @@ export const expensesApi = {
             await deleteDoc(doc(db, IMPORT_HASHES_COLLECTION, primaryFileHash));
           } else {
             throw new Error(
-              "DUPLICATE_RECEIPT: This exact receipt image has already been uploaded. Please check your expenses list."
+              "DUPLICATE_RECEIPT: This exact receipt image has already been uploaded. Please check your expenses list.|||SIMILAR_RECORDS:[]"
             );
           }
         } else {
           throw new Error(
-            "DUPLICATE_RECEIPT: This exact receipt image has already been uploaded. Please check your expenses list."
+            "DUPLICATE_RECEIPT: This exact receipt image has already been uploaded. Please check your expenses list.|||SIMILAR_RECORDS:[]"
           );
         }
       }
@@ -544,6 +544,24 @@ export const expensesApi = {
         try {
           const allExpSnap = await getDocs(collection(db, EXPENSES_COLLECTION));
 
+          // Collect ALL similar records for the duplicate preview panel
+          interface SimilarRecord {
+            id: string;
+            vendor_name: string;
+            amount: number;
+            date: string;
+            category: string;
+            payment_source: string;
+            card_last_4: string;
+            notes: string;
+            bank_description: string;
+            entry_type: string;
+            score: number;
+            reasons: string[];
+          }
+          const similarRecords: SimilarRecord[] = [];
+          let bestMatchDoc: { id: string; data: Record<string, any>; score: number } | null = null;
+
           for (const existingDoc of allExpSnap.docs) {
             if (existingDoc.id === expenseId) continue; // Skip our placeholder
             const data = existingDoc.data();
@@ -632,20 +650,56 @@ export const expensesApi = {
             // since same-station same-day same-amount is normal for trucking.
             // For other merchants, 70 is sufficient (exact amount + same date = 90).
             const threshold = isFuelCategory ? 95 : 70;
-            if (score >= threshold) {
-              console.log(`⚠️ Duplicate receipt detected (score: ${score}, threshold: ${threshold})! Matches expense ${existingDoc.id}: ${data.vendor_name} $${existingAmount} [${reasons.join(", ")}]`);
 
-              // Clean up: delete uploaded images and placeholder expense
-              for (const url of imageUrls) {
-                try { await storageApi.deleteReceipt(url); } catch { }
-              }
-              await deleteDoc(doc(db, EXPENSES_COLLECTION, expenseId));
-
-              throw new Error(
-                `DUPLICATE_RECEIPT: This receipt appears to have been uploaded before. ` +
-                `Matching expense: ${data.vendor_name || "Unknown"} - $${existingAmount.toFixed(2)} on ${existingDate}`
-              );
+            // Collect this as a similar record if it has a reasonable score (>= 50 means exact amount match)
+            if (score >= 50) {
+              similarRecords.push({
+                id: existingDoc.id,
+                vendor_name: data.vendor_name || "Unknown",
+                amount: existingAmount,
+                date: existingDate,
+                category: data.category || "uncategorized",
+                payment_source: data.payment_source || "",
+                card_last_4: data.card_last_4 || "",
+                notes: data.notes || "",
+                bank_description: data.bank_description || "",
+                entry_type: data.entry_type || "",
+                score,
+                reasons,
+              });
             }
+
+            if (score >= threshold && (!bestMatchDoc || score > bestMatchDoc.score)) {
+              bestMatchDoc = { id: existingDoc.id, data, score };
+            }
+          }
+
+          if (bestMatchDoc) {
+            const matchData = bestMatchDoc.data;
+            const matchAmount = matchData.cad_amount || 0;
+            const matchDate = matchData.transaction_date
+              ? (typeof matchData.transaction_date === "string" ? matchData.transaction_date.substring(0, 10) : "")
+              : "";
+
+            console.log(`⚠️ Duplicate receipt detected (score: ${bestMatchDoc.score})! Matches expense ${bestMatchDoc.id}: ${matchData.vendor_name} $${matchAmount}`);
+
+            // Clean up: delete uploaded images and placeholder expense
+            for (const url of imageUrls) {
+              try { await storageApi.deleteReceipt(url); } catch { }
+            }
+            await deleteDoc(doc(db, EXPENSES_COLLECTION, expenseId));
+
+            // Sort similar records by score (highest first)
+            similarRecords.sort((a, b) => b.score - a.score);
+
+            // Encode similar records as JSON payload in the error message
+            // Format: "DUPLICATE_RECEIPT: <message>|||SIMILAR_RECORDS:<json>"
+            const similarRecordsJson = JSON.stringify(similarRecords.slice(0, 5)); // Max 5 records
+            throw new Error(
+              `DUPLICATE_RECEIPT: This receipt appears to have been uploaded before. ` +
+              `Matching expense: ${matchData.vendor_name || "Unknown"} - $${matchAmount.toFixed(2)} on ${matchDate}` +
+              `|||SIMILAR_RECORDS:${similarRecordsJson}`
+            );
           }
         } catch (dupErr: any) {
           if (dupErr.message?.startsWith("DUPLICATE_RECEIPT")) throw dupErr;

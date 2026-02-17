@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, useCallback, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   CheckCircle,
@@ -18,6 +18,8 @@ import {
   Landmark,
   Camera,
   Link2,
+  Search,
+  X,
 } from "lucide-react";
 import Link from "next/link";
 import { expensesApi, cardsApi } from "@/lib/firebase-api";
@@ -25,6 +27,86 @@ import { formatCurrency, formatDate, cn } from "@/lib/utils";
 import { categoryLabels, categoryColors } from "@/lib/store";
 import { ReviewModal } from "@/components/expenses/ReviewModal";
 import toast from "react-hot-toast";
+
+// ============ Intelligent Search Helpers ============
+
+/**
+ * Fuzzy vendor matching: case-insensitive, partial match, handles minor variations.
+ * "Greenway" matches "Greenway Complex Services"
+ * "green complex" matches "Greenway Complex Services"
+ */
+function fuzzyMatch(query: string, text: string): boolean {
+  if (!query || !text) return false;
+  const q = query.toLowerCase().trim();
+  const t = text.toLowerCase().trim();
+
+  // Direct substring match
+  if (t.includes(q)) return true;
+
+  // Multi-word: all query words must appear somewhere in the text
+  const queryWords = q.split(/\s+/).filter(w => w.length > 0);
+  if (queryWords.length > 1) {
+    return queryWords.every(qw =>
+      t.includes(qw) ||
+      // Also check if any text word starts with the query word
+      t.split(/[\s,.\-\/]+/).some(tw => tw.startsWith(qw))
+    );
+  }
+
+  // Single word: check if any word in text starts with the query
+  const textWords = t.split(/[\s,.\-\/]+/);
+  return textWords.some(tw => tw.startsWith(q));
+}
+
+/**
+ * Parse amount search queries like "$1,250", "1250", "1200-1300", ">500", "<100"
+ */
+function parseAmountQuery(query: string): { type: "exact" | "range" | "gt" | "lt"; value?: number; min?: number; max?: number } | null {
+  const cleaned = query.replace(/[\$,\s]/g, "");
+
+  // Range: "1200-1300"
+  const rangeMatch = cleaned.match(/^(\d+\.?\d*)\s*[-–]\s*(\d+\.?\d*)$/);
+  if (rangeMatch) {
+    return { type: "range", min: parseFloat(rangeMatch[1]), max: parseFloat(rangeMatch[2]) };
+  }
+
+  // Greater than: ">500"
+  const gtMatch = cleaned.match(/^>(\d+\.?\d*)$/);
+  if (gtMatch) {
+    return { type: "gt", value: parseFloat(gtMatch[1]) };
+  }
+
+  // Less than: "<100"
+  const ltMatch = cleaned.match(/^<(\d+\.?\d*)$/);
+  if (ltMatch) {
+    return { type: "lt", value: parseFloat(ltMatch[1]) };
+  }
+
+  // Exact amount: "1250" or "1250.00"
+  const exactMatch = cleaned.match(/^(\d+\.?\d*)$/);
+  if (exactMatch && parseFloat(exactMatch[1]) > 0) {
+    return { type: "exact", value: parseFloat(exactMatch[1]) };
+  }
+
+  return null;
+}
+
+function matchesAmountQuery(amount: number, amountQuery: ReturnType<typeof parseAmountQuery>): boolean {
+  if (!amountQuery) return false;
+  switch (amountQuery.type) {
+    case "exact":
+      // Match within $1 tolerance for convenience
+      return Math.abs(amount - (amountQuery.value || 0)) < 1;
+    case "range":
+      return amount >= (amountQuery.min || 0) && amount <= (amountQuery.max || Infinity);
+    case "gt":
+      return amount > (amountQuery.value || 0);
+    case "lt":
+      return amount < (amountQuery.value || 0);
+    default:
+      return false;
+  }
+}
 
 const categoryIcons: Record<string, React.ReactNode> = {
   fuel: <Fuel className="w-4 h-4" />,
@@ -63,8 +145,18 @@ export default function ExpensesPage() {
     account?: string;
     source?: string;
   }>({});
+  const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [selectedExpense, setSelectedExpense] = useState<any>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const pageSize = 20;
+  const isSearchActive = searchQuery.trim().length > 0;
+
+  // Debounce search input (300ms) to avoid expensive filtering on every keystroke
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(searchQuery), 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
   // Fetch all expenses for proper client-side filtering
   const { data: allData, isLoading, refetch } = useQuery({
@@ -79,7 +171,7 @@ export default function ExpensesPage() {
     queryFn: () => cardsApi.list(),
   });
 
-  // Apply all filters client-side
+  // Apply all filters + smart search client-side
   const filteredData = useMemo(() => {
     if (!allData?.expenses) return { expenses: [] as any[], total: 0 };
     let expenses = [...allData.expenses];
@@ -131,6 +223,47 @@ export default function ExpensesPage() {
       });
     }
 
+    // ── Smart Search Filter (uses debounced value for performance) ──
+    if (debouncedSearch.trim()) {
+      const q = debouncedSearch.trim();
+      const amountQuery = parseAmountQuery(q);
+
+      expenses = expenses.filter((e: any) => {
+        // 1. Vendor name (fuzzy match)
+        if (fuzzyMatch(q, e.vendor_name || "")) return true;
+
+        // 2. Notes / memo
+        if (fuzzyMatch(q, e.notes || "")) return true;
+
+        // 3. Bank description
+        if (fuzzyMatch(q, e.bank_description || "")) return true;
+
+        // 4. Category label
+        const catLabel = categoryLabels[e.category] || e.category || "";
+        if (fuzzyMatch(q, catLabel)) return true;
+
+        // 5. Amount match (e.g. "$1,250" or "1200-1300" or ">500")
+        if (amountQuery && matchesAmountQuery(e.cad_amount || 0, amountQuery)) return true;
+
+        // 6. Date match (e.g. "Feb 12" or "2026-02-12")
+        if (e.transaction_date) {
+          const formattedDate = formatDate(e.transaction_date);
+          if (formattedDate.toLowerCase().includes(q.toLowerCase())) return true;
+          // Also check raw date string
+          const rawDate = typeof e.transaction_date === "string" ? e.transaction_date : "";
+          if (rawDate.includes(q)) return true;
+        }
+
+        // 7. Card last 4
+        if (e.card_last_4 && e.card_last_4.includes(q)) return true;
+
+        // 8. OCR raw text (deep search)
+        if (e.raw_ocr_text && e.raw_ocr_text.toLowerCase().includes(q.toLowerCase())) return true;
+
+        return false;
+      });
+    }
+
     expenses.sort((a: any, b: any) => {
       const dateA = a.transaction_date ? new Date(a.transaction_date) : new Date(0);
       const dateB = b.transaction_date ? new Date(b.transaction_date) : new Date(0);
@@ -142,19 +275,25 @@ export default function ExpensesPage() {
     });
 
     return { expenses, total: expenses.length };
-  }, [allData, filter]);
+  }, [allData, filter, debouncedSearch]);
 
-  // Client-side pagination
-  const totalPages = Math.ceil(filteredData.total / pageSize);
+  // Client-side pagination (bypassed when search is active)
+  const totalPages = isSearchActive ? 1 : Math.ceil(filteredData.total / pageSize);
   const paginatedExpenses = useMemo(() => {
+    if (isSearchActive) return filteredData.expenses; // Show ALL results when searching
     const start = (page - 1) * pageSize;
     return filteredData.expenses.slice(start, start + pageSize);
-  }, [filteredData, page, pageSize]);
+  }, [filteredData, page, pageSize, isSearchActive]);
 
   const updateFilter = (newFilter: typeof filter) => {
     setFilter(newFilter);
     setPage(1);
   };
+
+  const clearSearch = useCallback(() => {
+    setSearchQuery("");
+    searchInputRef.current?.focus();
+  }, []);
 
   const handleDelete = async (id: string) => {
     if (!confirm("Are you sure you want to delete this expense?")) return;
@@ -188,7 +327,7 @@ export default function ExpensesPage() {
     return { total, gst, hst, pst, taxTotal: gst + hst + pst, verified, pending, count: expenses.length, matched, needsReceipt };
   }, [filteredData]);
 
-  const hasActiveFilters = filter.category || filter.verified_only !== undefined || filter.quarter || filter.account || filter.source;
+  const hasActiveFilters = filter.category || filter.verified_only !== undefined || filter.quarter || filter.account || filter.source || isSearchActive;
 
   const chipClass = (isActive: boolean) => cn(
     "text-sm rounded-full px-3 py-1.5 border transition-colors appearance-none cursor-pointer pr-7 bg-no-repeat bg-[right_8px_center] bg-[length:12px]",
@@ -209,8 +348,67 @@ export default function ExpensesPage() {
           <p className="text-slate-400 text-sm mt-0.5">
             {filteredData.total} expense{filteredData.total !== 1 ? "s" : ""}
             {hasActiveFilters && " (filtered)"}
+            {isSearchActive && " — showing all results"}
           </p>
         </div>
+      </div>
+
+      {/* ── Global Smart Search Bar ── */}
+      <div className="relative group" id="expense-smart-search">
+        <div className={cn(
+          "relative flex items-center rounded-xl border transition-all duration-200",
+          isSearchActive
+            ? "border-amber-500/50 bg-amber-500/5 shadow-lg shadow-amber-500/10"
+            : "border-slate-700 bg-slate-800/50 hover:border-slate-600 focus-within:border-amber-500/50 focus-within:bg-amber-500/5 focus-within:shadow-lg focus-within:shadow-amber-500/10"
+        )}>
+          <Search className={cn(
+            "w-5 h-5 ml-4 flex-shrink-0 transition-colors",
+            isSearchActive ? "text-amber-500" : "text-slate-500 group-focus-within:text-amber-500"
+          )} />
+          <input
+            ref={searchInputRef}
+            type="text"
+            value={searchQuery}
+            onChange={(e) => {
+              setSearchQuery(e.target.value);
+              setPage(1);
+            }}
+            placeholder="Search by vendor, amount ($1,250), date, memo, category..."
+            className="flex-1 bg-transparent text-white placeholder-slate-500 px-3 py-3 md:py-3.5 text-sm md:text-base outline-none"
+            id="expense-search-input"
+          />
+          {isSearchActive && (
+            <div className="flex items-center gap-2 mr-3">
+              <span className="text-xs text-amber-400/80 font-medium whitespace-nowrap">
+                {filteredData.total} result{filteredData.total !== 1 ? "s" : ""}
+              </span>
+              <button
+                onClick={clearSearch}
+                className="p-1 text-slate-400 hover:text-white hover:bg-slate-700 rounded-md transition-colors"
+                title="Clear search"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+        </div>
+        {/* Search hint */}
+        {!isSearchActive && (
+          <p className="text-xs text-slate-600 mt-1.5 ml-1 hidden md:block">
+            💡 Try: vendor name, <span className="text-slate-500">&quot;$1,250&quot;</span>, <span className="text-slate-500">&quot;1000-2000&quot;</span>, <span className="text-slate-500">&quot;{'>'}500&quot;</span>, date, or memo keywords
+          </p>
+        )}
+        {/* No results message */}
+        {isSearchActive && filteredData.total === 0 && (
+          <div className="mt-2 p-3 rounded-lg bg-slate-800/50 border border-slate-700">
+            <p className="text-sm text-slate-400">
+              No matching records found for <span className="text-white font-medium">"{searchQuery}"</span>
+            </p>
+            <p className="text-xs text-slate-500 mt-1">
+              Try a different vendor name, amount, or date. Search supports partial matches.
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Summary Bar — always visible */}
@@ -368,7 +566,10 @@ export default function ExpensesPage() {
 
         {hasActiveFilters && (
           <button
-            onClick={() => updateFilter({})}
+            onClick={() => {
+              updateFilter({});
+              setSearchQuery("");
+            }}
             className="text-xs text-slate-400 hover:text-white px-2 py-1 transition-colors"
           >
             Clear all
@@ -435,8 +636,8 @@ export default function ExpensesPage() {
           </div>
         )}
 
-        {/* Pagination */}
-        {filteredData.total > pageSize && (
+        {/* Pagination (hidden when search is active — all results shown) */}
+        {filteredData.total > pageSize && !isSearchActive && (
           <div className="px-4 md:px-6 py-3 md:py-4 border-t border-slate-800 flex items-center justify-between">
             <p className="text-xs md:text-sm text-slate-400">
               Page {page} of {totalPages} ({filteredData.total} results)
@@ -457,6 +658,20 @@ export default function ExpensesPage() {
                 Next
               </button>
             </div>
+          </div>
+        )}
+        {/* Search results count bar */}
+        {isSearchActive && filteredData.total > 0 && (
+          <div className="px-4 md:px-6 py-3 border-t border-slate-800 flex items-center justify-between">
+            <p className="text-xs md:text-sm text-slate-400">
+              Showing all {filteredData.total} matching result{filteredData.total !== 1 ? "s" : ""}
+            </p>
+            <button
+              onClick={clearSearch}
+              className="text-xs text-amber-400 hover:text-amber-300 font-medium"
+            >
+              Clear search
+            </button>
           </div>
         )}
       </div>

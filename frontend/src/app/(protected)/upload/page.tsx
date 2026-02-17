@@ -28,6 +28,22 @@ import { categoryLabels } from "@/lib/store";
 import { ReviewModal } from "@/components/expenses/ReviewModal";
 import { ManualEntryModal } from "@/components/expenses/ManualEntryModal";
 
+// Similar record type from duplicate detection
+interface SimilarRecord {
+  id: string;
+  vendor_name: string;
+  amount: number;
+  date: string;
+  category: string;
+  payment_source: string;
+  card_last_4: string;
+  notes: string;
+  bank_description: string;
+  entry_type: string;
+  score: number;
+  reasons: string[];
+}
+
 type UploadState = "idle" | "uploading" | "processing" | "success" | "error";
 
 interface SelectedFile {
@@ -45,6 +61,7 @@ export default function UploadPage() {
   const [showReviewModal, setShowReviewModal] = useState(false);
   const [showManualEntryModal, setShowManualEntryModal] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [similarRecords, setSimilarRecords] = useState<SimilarRecord[]>([]);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
 
@@ -108,12 +125,25 @@ export default function UploadPage() {
     } catch (err: any) {
       setUploadState("error");
       if (err.message?.startsWith("DUPLICATE_RECEIPT")) {
-        // Extract the readable part after the prefix
-        const msg = err.message.replace("DUPLICATE_RECEIPT: ", "");
-        setError(msg);
+        // Parse the error message to extract similar records
+        const fullMsg = err.message.replace("DUPLICATE_RECEIPT: ", "");
+        const parts = fullMsg.split("|||SIMILAR_RECORDS:");
+        const readableMsg = parts[0];
+        setError(readableMsg);
+
+        // Parse similar records JSON if present
+        if (parts[1]) {
+          try {
+            const records = JSON.parse(parts[1]);
+            setSimilarRecords(records);
+          } catch {
+            setSimilarRecords([]);
+          }
+        }
         toast.error("Duplicate receipt detected!");
       } else {
         setError(err.message || "Failed to process receipt");
+        setSimilarRecords([]);
         toast.error("Failed to process receipt");
       }
     }
@@ -126,6 +156,7 @@ export default function UploadPage() {
     setProgress(0);
     setProcessedExpense(null);
     setError(null);
+    setSimilarRecords([]);
   };
 
   const handleReviewComplete = () => {
@@ -406,6 +437,80 @@ export default function UploadPage() {
                         {isDuplicate ? "Duplicate Receipt Detected" : "Processing Error"}
                       </p>
                       <p className="text-slate-400 text-sm mt-1">{error}</p>
+
+                      {/* ── Duplicate Preview Panel ── */}
+                      {isDuplicate && similarRecords.length > 0 && (
+                        <div className="mt-3 space-y-2">
+                          <p className="text-xs text-amber-400/80 font-medium uppercase tracking-wider">
+                            Possible similar records found:
+                          </p>
+                          <div className="space-y-2">
+                            {similarRecords.map((record, idx) => (
+                              <div
+                                key={record.id || idx}
+                                className="p-3 rounded-lg bg-slate-800/80 border border-slate-700/50 hover:border-amber-500/30 transition-colors"
+                              >
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="min-w-0 flex-1">
+                                    <p className="text-sm font-medium text-white truncate">
+                                      {record.vendor_name}
+                                    </p>
+                                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1">
+                                      <span className="text-xs text-slate-400">
+                                        📅 {record.date || "No date"}
+                                      </span>
+                                      {record.card_last_4 && (
+                                        <span className="text-xs text-slate-400">
+                                          💳 ••{record.card_last_4}
+                                        </span>
+                                      )}
+                                      {record.payment_source && record.payment_source !== "unknown" && (
+                                        <span className="text-xs text-slate-400">
+                                          🏦 {record.payment_source.replace(/_/g, " ")}
+                                        </span>
+                                      )}
+                                    </div>
+                                    {(record.notes || record.bank_description) && (
+                                      <p className="text-xs text-slate-500 mt-1 truncate">
+                                        📝 {record.notes || record.bank_description}
+                                      </p>
+                                    )}
+                                    {record.category && record.category !== "uncategorized" && (
+                                      <span className="inline-block mt-1 text-[10px] px-1.5 py-0.5 rounded bg-slate-700 text-slate-400">
+                                        {categoryLabels[record.category] || record.category}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="flex-shrink-0 text-right">
+                                    <span className="text-lg font-bold text-white">
+                                      ${record.amount.toFixed(2)}
+                                    </span>
+                                    <div className="mt-0.5">
+                                      <span className={cn(
+                                        "text-[10px] px-1.5 py-0.5 rounded font-medium",
+                                        record.score >= 90
+                                          ? "bg-red-500/20 text-red-400"
+                                          : record.score >= 70
+                                            ? "bg-amber-500/20 text-amber-400"
+                                            : "bg-slate-500/20 text-slate-400"
+                                      )}>
+                                        {record.score >= 90 ? "Very likely" : record.score >= 70 ? "Likely" : "Possible"} match
+                                      </span>
+                                    </div>
+                                    <p className="text-[10px] text-slate-600 mt-0.5">
+                                      {record.reasons.join(", ")}
+                                    </p>
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                          <p className="text-xs text-slate-500 mt-1">
+                            Review the records above. If this is a new transaction, click &quot;Upload Anyway&quot; to proceed.
+                          </p>
+                        </div>
+                      )}
+
                       <div className="flex flex-wrap gap-3 mt-3">
                         <button
                           onClick={reset}
