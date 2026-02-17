@@ -46,6 +46,7 @@ export interface Expense {
   exchange_rate: number;
   cad_amount: number | null;
   card_last_4: string | null;
+  invoice_number: string | null;  // Unique transaction/invoice/auth identifier from receipt
   payment_source: string;
   receipt_image_url: string | null;
   receipt_image_urls?: string[];  // Multiple images support
@@ -533,9 +534,13 @@ export const expensesApi = {
       // Uses a scoring system: amount + date is already strong evidence,
       // vendor match is a bonus. This catches camera re-takes of same receipt.
       // NOTE: This runs AFTER bank matching so bank transactions aren't false-positive duplicates.
+      const parsedInvoiceNumber = (result.invoice_number || "").trim();
+      const parsedCategory = (result.category || "").toLowerCase();
+      const isFuelCategory = parsedCategory === "fuel";
+
       if (parsedAmount > 0 && !skipDuplicateCheck) {
         console.log("🔍 Checking for duplicate receipt data...");
-        console.log(`   Parsed: vendor="${parsedVendor}" amount=${parsedAmount} date="${parsedDateStr}"`);
+        console.log(`   Parsed: vendor="${parsedVendor}" amount=${parsedAmount} date="${parsedDateStr}" invoice="${parsedInvoiceNumber}" category="${parsedCategory}"`);
         try {
           const allExpSnap = await getDocs(collection(db, EXPENSES_COLLECTION));
 
@@ -557,6 +562,15 @@ export const expensesApi = {
                 : "")
               : "";
             const existingVendor = (data.vendor_name || "").toLowerCase().trim();
+            const existingInvoiceNumber = (data.invoice_number || "").trim();
+
+            // ── Invoice number disambiguation ──
+            // If BOTH receipts have a non-empty invoice/transaction number
+            // and they DIFFER → these are definitely different transactions, skip.
+            if (parsedInvoiceNumber && existingInvoiceNumber &&
+              parsedInvoiceNumber !== existingInvoiceNumber) {
+              continue; // Different invoice numbers = not a duplicate
+            }
 
             // Score-based duplicate detection
             // Only exact amount counts - gas stations (Petro Canada, etc.) often have
@@ -588,11 +602,12 @@ export const expensesApi = {
               }
             }
 
-            // Vendor check: bonus points
+            // Vendor check: bonus points (reduced for fuel to avoid false positives
+            // since refueling at the same station is routine for trucking)
             if (parsedVendor && existingVendor) {
               if (parsedVendor === existingVendor) {
-                score += 20;
-                reasons.push("exact vendor");
+                score += isFuelCategory ? 5 : 20;
+                reasons.push(isFuelCategory ? "exact vendor (fuel)" : "exact vendor");
               } else {
                 const rWords = parsedVendor.split(/[\s,.\-\/]+/).filter((w: string) => w.length > 2);
                 const eWords = existingVendor.split(/[\s,.\-\/]+/).filter((w: string) => w.length > 2);
@@ -600,16 +615,25 @@ export const expensesApi = {
                   eWords.some((ew: string) => ew.includes(rw) || rw.includes(ew))
                 );
                 if (hasCommon) {
-                  score += 10;
+                  score += isFuelCategory ? 3 : 10;
                   reasons.push("vendor partial match");
                 }
               }
             }
 
-            // Threshold: score >= 70 means high confidence duplicate
-            // (exact amount + same date = 90, exact amount + date±1 = 75)
-            if (score >= 70) {
-              console.log(`⚠️ Duplicate receipt detected (score: ${score})! Matches expense ${existingDoc.id}: ${data.vendor_name} $${existingAmount} [${reasons.join(", ")}]`);
+            // Same invoice number is strong confirmation of true duplicate
+            if (parsedInvoiceNumber && existingInvoiceNumber &&
+              parsedInvoiceNumber === existingInvoiceNumber) {
+              score += 30;
+              reasons.push("same invoice #");
+            }
+
+            // Threshold: For fuel merchants, require very high confidence (95)
+            // since same-station same-day same-amount is normal for trucking.
+            // For other merchants, 70 is sufficient (exact amount + same date = 90).
+            const threshold = isFuelCategory ? 95 : 70;
+            if (score >= threshold) {
+              console.log(`⚠️ Duplicate receipt detected (score: ${score}, threshold: ${threshold})! Matches expense ${existingDoc.id}: ${data.vendor_name} $${existingAmount} [${reasons.join(", ")}]`);
 
               // Clean up: delete uploaded images and placeholder expense
               for (const url of imageUrls) {
@@ -644,6 +668,7 @@ export const expensesApi = {
         exchange_rate: result.exchange_rate || 1.0,
         cad_amount: result.cad_amount || result.total_amount,
         card_last_4: result.card_last_4,
+        invoice_number: result.invoice_number || null,
         raw_ocr_text: result.raw_text,
         processing_status: "completed",
         entry_type: "ocr",

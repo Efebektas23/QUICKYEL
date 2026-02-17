@@ -171,6 +171,7 @@ class ParsedReceiptData(BaseModel):
     pst_amount: float = 0.0  # PST only (6-10%) - Provincial tax, NOT recoverable
     tax_amount: float = 0.0  # Total tax (computed sum)
     card_last_4: Optional[str] = None
+    invoice_number: Optional[str] = None  # Invoice #, Trans #, Auth code, or any unique receipt ID
     confidence: float = 0.0
 
 

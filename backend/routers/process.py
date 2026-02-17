@@ -38,6 +38,7 @@ class ProcessReceiptResponse(BaseModel):
     exchange_rate: float = 1.0
     cad_amount: Optional[float] = None
     card_last_4: Optional[str] = None
+    invoice_number: Optional[str] = None  # Unique transaction/invoice/auth identifier
     raw_text: Optional[str] = None
     confidence: float = 0.0
 
@@ -127,6 +128,7 @@ async def process_receipt(request: ProcessReceiptRequest):
             exchange_rate=exchange_rate,
             cad_amount=cad_amount,
             card_last_4=parsed_data.card_last_4,
+            invoice_number=parsed_data.invoice_number,
             raw_text=ocr_text,
             confidence=parsed_data.confidence or 0.5
         )

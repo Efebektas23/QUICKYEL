@@ -104,6 +104,19 @@ EXTRACTION RULES:
    - Invoices: "Total Due", "Amount Due", "Invoice Total", "Balance Due"
    - NOT "Subtotal" - get the FINAL amount including tax
 
+9. INVOICE/TRANSACTION NUMBER: Extract the most unique transaction identifier. Look for (in priority order):
+   - "Invoice No", "Invoice #", "Inv #"
+   - "Trans #", "Transaction #", "Trans No"
+   - "Reference #", "Ref #"
+   - "Auth #", "Authorization #", "Auth Code"
+   - Any other unique receipt/transaction identifier
+   - For gas station receipts, prefer Invoice No or Trans # over terminal numbers
+   - Return the value as a string, or null if not found
+
+10. DUPLICATE TEXT: If the receipt contains "*** DUPLICATE ***" or similar POS copy indicators,
+    IGNORE it completely. This is a POS terminal copy indicator, NOT a transactional flag.
+    It does NOT mean the transaction is a duplicate. Extract data normally.
+
 RESPOND WITH ONLY THIS JSON (no markdown, no explanation):
 {
     "vendor_name": "string or null",
@@ -114,9 +127,10 @@ RESPOND WITH ONLY THIS JSON (no markdown, no explanation):
     "category": "exact category name from list above",
     "total_amount": number or null,
     "gst_amount": number (GST 5% only, 0 if HST province or USA),
-    "hst_amount": number (HST 13-15% only, 0 if GST+PST province or USA),
+    "hst_amount": number (HST 13-15% only, 0 if HST province or USA),
     "pst_amount": number (PST/QST only, 0 if HST province or USA),
     "card_last_4": "4 digits or null",
+    "invoice_number": "string or null (most unique receipt/transaction identifier)",
     "confidence": number 0.0-1.0
 }"""
 
@@ -211,6 +225,7 @@ EXTRACT AND RETURN JSON:"""
                 pst_amount=pst_amount,
                 tax_amount=tax_amount,
                 card_last_4=data.get("card_last_4"),
+                invoice_number=data.get("invoice_number"),
                 confidence=data.get("confidence", 0.5)
             )
             
