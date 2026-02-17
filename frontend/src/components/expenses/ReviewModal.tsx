@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   X,
@@ -15,6 +15,9 @@ import {
   RefreshCw,
   Link2,
   Landmark,
+  Search,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { useQuery } from "@tanstack/react-query";
@@ -37,6 +40,10 @@ export function ReviewModal({
   onSave,
 }: ReviewModalProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showLinkPanel, setShowLinkPanel] = useState(false);
+  const [linkSearch, setLinkSearch] = useState("");
+  const [isLinking, setIsLinking] = useState(false);
+  const [confirmLinkId, setConfirmLinkId] = useState<string | null>(null);
 
   // Fetch registered cards for card selection
   const { data: cards } = useQuery({
@@ -44,6 +51,59 @@ export function ReviewModal({
     queryFn: () => cardsApi.list(),
     enabled: isOpen,
   });
+
+  // Determine if this is a linkable receipt expense
+  const isReceiptExpense = !!expense.receipt_image_url && !expense.bank_linked && expense.entry_type !== "bank_import";
+
+  // Fetch unmatched bank import transactions (for manual linking)
+  const { data: bankTransactions } = useQuery({
+    queryKey: ["bank-transactions-unmatched"],
+    queryFn: async () => {
+      const result = await expensesApi.list({ per_page: 1000 });
+      return result.expenses.filter((e: any) =>
+        e.entry_type === "bank_import" && !e.receipt_linked && !e.receipt_image_url
+      );
+    },
+    enabled: isOpen && isReceiptExpense,
+  });
+
+  // Filter bank transactions by search query
+  const filteredBankTxns = useMemo(() => {
+    if (!bankTransactions) return [];
+    if (!linkSearch.trim()) return bankTransactions;
+    const q = linkSearch.toLowerCase().trim();
+    return bankTransactions.filter((t: any) => {
+      if ((t.vendor_name || "").toLowerCase().includes(q)) return true;
+      if ((t.bank_description || "").toLowerCase().includes(q)) return true;
+      if ((t.notes || "").toLowerCase().includes(q)) return true;
+      // Amount search
+      const amtStr = String(t.cad_amount || 0);
+      if (amtStr.includes(q)) return true;
+      // Date search
+      if (t.transaction_date) {
+        const fmtDate = formatDate(t.transaction_date);
+        if (fmtDate.toLowerCase().includes(q)) return true;
+      }
+      return false;
+    });
+  }, [bankTransactions, linkSearch]);
+
+  // Handle manual link
+  const handleLink = async (bankExpenseId: string) => {
+    setIsLinking(true);
+    try {
+      await expensesApi.linkToBank(expense.id, bankExpenseId);
+      toast.success("Receipt linked to bank transaction!");
+      setShowLinkPanel(false);
+      setConfirmLinkId(null);
+      onSave(); // Refresh parent
+      onClose();
+    } catch (err: any) {
+      toast.error(err.message || "Failed to link");
+    } finally {
+      setIsLinking(false);
+    }
+  };
 
   // Convert transaction_date to YYYY-MM-DD for the date input (timezone-safe)
   const toDateInputValue = (d: any): string => {
@@ -214,6 +274,123 @@ export function ReviewModal({
                     </p>
                   )}
                 </div>
+              </div>
+            )}
+
+            {/* Manual Link to Bank Transaction */}
+            {isReceiptExpense && (
+              <div className="mb-4">
+                <button
+                  type="button"
+                  onClick={() => { setShowLinkPanel(!showLinkPanel); setConfirmLinkId(null); }}
+                  className="w-full flex items-center justify-between gap-2 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 hover:bg-emerald-500/15 transition-colors text-left"
+                >
+                  <div className="flex items-center gap-2">
+                    <Link2 className="w-5 h-5 text-emerald-400" />
+                    <div>
+                      <p className="text-emerald-300 text-sm font-medium">Link to Bank Transaction</p>
+                      <p className="text-emerald-400/60 text-xs">Manually match this receipt with an unmatched bank import</p>
+                    </div>
+                  </div>
+                  {showLinkPanel ? (
+                    <ChevronUp className="w-4 h-4 text-emerald-400" />
+                  ) : (
+                    <ChevronDown className="w-4 h-4 text-emerald-400" />
+                  )}
+                </button>
+
+                {showLinkPanel && (
+                  <div className="mt-2 p-3 rounded-xl bg-slate-800/80 border border-slate-700/50 space-y-3">
+                    {/* Search */}
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+                      <input
+                        type="text"
+                        value={linkSearch}
+                        onChange={(e) => setLinkSearch(e.target.value)}
+                        placeholder="Search by description, amount, date..."
+                        className="input-field pl-9 text-sm"
+                      />
+                    </div>
+
+                    {/* Transaction list */}
+                    <div className="max-h-60 overflow-y-auto space-y-1.5 scrollbar-thin">
+                      {!bankTransactions ? (
+                        <div className="flex items-center justify-center py-6 text-slate-500">
+                          <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                          Loading bank transactions...
+                        </div>
+                      ) : filteredBankTxns.length === 0 ? (
+                        <div className="text-center py-6 text-slate-500 text-sm">
+                          {linkSearch ? "No matching bank transactions found" : "No unmatched bank transactions available"}
+                        </div>
+                      ) : (
+                        filteredBankTxns.map((txn: any) => (
+                          <div
+                            key={txn.id}
+                            className={cn(
+                              "p-2.5 rounded-lg border transition-colors cursor-pointer",
+                              confirmLinkId === txn.id
+                                ? "bg-emerald-500/10 border-emerald-500/30"
+                                : "bg-slate-800/50 border-slate-700/30 hover:border-slate-600"
+                            )}
+                            onClick={() => setConfirmLinkId(confirmLinkId === txn.id ? null : txn.id)}
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0 flex-1">
+                                <p className="text-sm font-medium text-white truncate">
+                                  {txn.vendor_name || txn.bank_description || "Unknown"}
+                                </p>
+                                <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-0.5">
+                                  <span className="text-xs text-slate-400">
+                                    {txn.transaction_date ? formatDate(txn.transaction_date) : "No date"}
+                                  </span>
+                                  {txn.card_last_4 && (
+                                    <span className="text-xs text-slate-500">
+                                      •••• {txn.card_last_4}
+                                    </span>
+                                  )}
+                                  {txn.bank_description && txn.vendor_name && (
+                                    <span className="text-xs text-slate-500 truncate max-w-[200px]">
+                                      {txn.bank_description}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                              <span className="text-sm font-bold text-white flex-shrink-0">
+                                {formatCurrency(txn.cad_amount || 0)}
+                              </span>
+                            </div>
+
+                            {/* Confirm link button */}
+                            {confirmLinkId === txn.id && (
+                              <div className="mt-2 pt-2 border-t border-slate-700/50 flex items-center justify-between">
+                                <p className="text-xs text-emerald-400">Link this receipt to this transaction?</p>
+                                <button
+                                  type="button"
+                                  onClick={(e) => { e.stopPropagation(); handleLink(txn.id); }}
+                                  disabled={isLinking}
+                                  className="flex items-center gap-1 px-3 py-1 rounded-lg bg-emerald-500 text-white text-xs font-medium hover:bg-emerald-600 transition-colors disabled:opacity-50"
+                                >
+                                  {isLinking ? (
+                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                  ) : (
+                                    <Link2 className="w-3 h-3" />
+                                  )}
+                                  Confirm Link
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </div>
+
+                    <p className="text-[10px] text-slate-600">
+                      {filteredBankTxns.length} unmatched bank transaction{filteredBankTxns.length !== 1 ? "s" : ""}
+                    </p>
+                  </div>
+                )}
               </div>
             )}
 

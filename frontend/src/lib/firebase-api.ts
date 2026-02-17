@@ -753,6 +753,75 @@ export const expensesApi = {
   },
 
   /**
+   * Manually link a receipt expense to a bank_import expense.
+   * Mirrors the auto-match flow (lines 486–526) but triggered by the user.
+   *
+   * @param receiptExpenseId - ID of the standalone receipt expense (entry_type: "ocr")
+   * @param bankExpenseId - ID of the bank_import expense to link to
+   * @returns The merged expense (bank_import doc with receipt data attached)
+   */
+  linkToBank: async (receiptExpenseId: string, bankExpenseId: string): Promise<Expense> => {
+    console.log(`🔗 Manual link: receipt ${receiptExpenseId} → bank ${bankExpenseId}`);
+
+    // 1. Fetch both expenses
+    const receiptExp = await expensesApi.get(receiptExpenseId);
+    const bankExp = await expensesApi.get(bankExpenseId);
+
+    if (!receiptExp) throw new Error("Receipt expense not found");
+    if (!bankExp) throw new Error("Bank transaction not found");
+
+    // 2. Validate: receipt expense must have a receipt image
+    if (!receiptExp.receipt_image_url) {
+      throw new Error("The selected expense has no receipt image to link");
+    }
+
+    // 3. Validate: bank expense should be a bank_import
+    if (bankExp.entry_type !== "bank_import") {
+      throw new Error("The target expense is not a bank import transaction");
+    }
+
+    // 4. Validate: bank expense shouldn't already be linked
+    if (bankExp.receipt_linked || bankExp.receipt_image_url) {
+      throw new Error("This bank transaction already has a receipt linked");
+    }
+
+    // 5. Copy receipt data onto the bank_import expense (same as auto-match)
+    await expensesApi.update(bankExpenseId, {
+      // Receipt visual archive
+      receipt_image_url: receiptExp.receipt_image_url,
+      receipt_image_urls: receiptExp.receipt_image_urls || [receiptExp.receipt_image_url],
+      raw_ocr_text: receiptExp.raw_ocr_text,
+      // Tax info from receipt
+      tax_amount: receiptExp.tax_amount || bankExp.tax_amount || 0,
+      gst_amount: receiptExp.gst_amount || bankExp.gst_amount || 0,
+      hst_amount: receiptExp.hst_amount || bankExp.hst_amount || 0,
+      pst_amount: receiptExp.pst_amount || bankExp.pst_amount || 0,
+      // Keep better vendor/category info
+      vendor_name: receiptExp.vendor_name || bankExp.vendor_name,
+      category: (receiptExp.category && receiptExp.category !== "uncategorized")
+        ? receiptExp.category
+        : bankExp.category,
+      jurisdiction: (receiptExp.jurisdiction && receiptExp.jurisdiction !== "unknown")
+        ? receiptExp.jurisdiction
+        : bankExp.jurisdiction,
+      card_last_4: receiptExp.card_last_4 || bankExp.card_last_4,
+      // Link flags
+      receipt_linked: true,
+      receipt_linked_date: new Date(),
+      bank_match_reason: "manual link",
+      is_verified: false, // Needs user review
+      processing_status: "completed",
+    });
+
+    // 6. Delete the standalone receipt expense
+    await deleteDoc(doc(db, EXPENSES_COLLECTION, receiptExpenseId));
+    console.log(`✅ Manual link complete: deleted receipt ${receiptExpenseId}, merged into bank ${bankExpenseId}`);
+
+    // 7. Return the merged expense
+    return (await expensesApi.get(bankExpenseId))!;
+  },
+
+  /**
    * Upload single receipt and process with backend AI
    */
   upload: async (file: File): Promise<Expense> => {
