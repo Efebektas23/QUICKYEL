@@ -21,7 +21,7 @@ VALID_CATEGORIES = [
     "fuel", "maintenance_repairs", "insurance", "licenses_dues",
     "tolls_scales", "meals_entertainment", "travel_lodging", "office_admin",
     "factoring_fees", "payroll", "subcontractor", "professional_fees",
-    "rent_lease", "loan_interest", "other_expenses", "uncategorized"
+    "rent_lease", "loan_interest", "personal", "other_expenses", "uncategorized"
 ]
 
 
@@ -168,6 +168,7 @@ TRANSACTION CLASSIFICATION RULES:
    - "tolls_scales": Tolls, bridge fees, scale fees; **US**: DTOPS, PREPASS, EZPASS / E-ZPass (incl. Bank of America debits), CBP border fees, CAT SCALE, ODOT tolls
    - "meals_entertainment": Restaurants, food, DENNY'S, TIM HORTONS
    - "travel_lodging": Hotels, motels
+   - "personal": Clearly personal / private spending (not business-related); user tracks separately — not T2125 deductible
    - "uncategorized": Cannot determine category
    - ⚠️ NEVER classify "Funds transfer", "Cash withdrawal" as expense!
 

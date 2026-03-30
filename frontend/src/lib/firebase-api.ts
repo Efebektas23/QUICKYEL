@@ -2834,6 +2834,7 @@ const DEDUCTION_RATES: Record<string, number> = {
   professional_fees: 1.0,       // 100% deductible
   rent_lease: 1.0,              // 100% deductible
   loan_interest: 1.0,           // 100% deductible (interest only)
+  personal: 0.0,                // Not a business deduction
   other_expenses: 1.0,          // 100% deductible
   uncategorized: 0.0,           // 0% - Safety default until categorized
 };
@@ -2867,6 +2868,7 @@ const categoryDisplayNames: Record<string, string> = {
   professional_fees: "Professional Fees",
   rent_lease: "Rent / Lease",
   loan_interest: "Loan Interest",
+  personal: "Personel",
   other_expenses: "Other Expenses",
   uncategorized: "Uncategorized",
 };

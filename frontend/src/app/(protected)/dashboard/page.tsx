@@ -34,6 +34,7 @@ import {
   Image as ImageIcon,
   Link as LinkIcon,
   Package,
+  UserCircle,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -63,6 +64,7 @@ const categoryIcons: Record<string, React.ReactNode> = {
   rent_lease: <FileText className="w-5 h-5" />,
   depreciation_cca: <TrendingDown className="w-5 h-5" />,
   loan_interest: <DollarSign className="w-5 h-5" />,
+  personal: <UserCircle className="w-5 h-5" />,
   other_expenses: <HelpCircle className="w-5 h-5" />,
   uncategorized: <HelpCircle className="w-5 h-5" />,
 };

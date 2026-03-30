@@ -29,6 +29,7 @@ class ExpenseCategory(enum.Enum):
     PROFESSIONAL_FEES = "professional_fees"  # Accounting, legal, consulting
     RENT_LEASE = "rent_lease"  # Equipment/vehicle lease payments
     LOAN_INTEREST = "loan_interest"  # Loan interest payments (not principal)
+    PERSONAL = "personal"  # Personal / non-business spending (not T2125 deductible)
     OTHER_EXPENSES = "other_expenses"  # Catch-all for business expenses
     UNCATEGORIZED = "uncategorized"
 

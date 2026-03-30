@@ -127,6 +127,14 @@ export const EXPENSE_CATEGORIES: CategoryConfig[] = [
     color: "rose",
   },
   {
+    id: "personal",
+    label: "Personel",
+    tooltip: "Personal / non-business spending you want to track separately (not deductible on T2125).",
+    deductionRate: 0.0,
+    icon: "UserCircle",
+    color: "teal",
+  },
+  {
     id: "other_expenses",
     label: "Other Expenses",
     tooltip: "Other business-related expenses that don't fit the above categories.",
@@ -188,6 +196,7 @@ export const categoryColors: Record<string, string> = {
   professional_fees: "bg-violet-500/20 text-violet-500",
   rent_lease: "bg-fuchsia-500/20 text-fuchsia-500",
   loan_interest: "bg-rose-500/20 text-rose-500",
+  personal: "bg-teal-500/20 text-teal-400",
   other_expenses: "bg-gray-500/20 text-gray-400",
   uncategorized: "bg-slate-500/20 text-slate-400",
 };

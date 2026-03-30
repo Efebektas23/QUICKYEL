@@ -101,6 +101,7 @@ EXTRACTION RULES:
    - "travel_lodging": Hotel, Motel, Inn, Lodge, Stay, Room, Hampton, Holiday Inn, Best Western, Comfort Inn
    - "office_admin": Bank Fee, Software, Subscription, Supplies, Staples, Office Depot, Amazon, Best Buy, Phone, Internet
    - "other_expenses": Professional services, consulting, legal, accounting, other business expenses
+   - "personal": Personal or clearly non-business purchases (not deductible on T2125)
    - "uncategorized": ONLY if none of the above match - try hard to categorize!
 
 7. CARD LAST 4: Look for patterns like "****1234", "VISA 5678", "MC 9012", "Card: XXXX1234"

@@ -15,6 +15,7 @@ ITC_ZERO = frozenset({
     "loan_interest",
     "payroll",
     "travel_lodging",
+    "personal",
     "other_expenses",
     "uncategorized",
     "licenses_dues",

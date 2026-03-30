@@ -44,6 +44,7 @@ const ITC_ZERO: Set<string> = new Set([
   "loan_interest",
   "payroll",
   "travel_lodging",
+  "personal",
   "other_expenses",
   "uncategorized",
   "licenses_dues",

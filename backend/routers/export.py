@@ -37,6 +37,7 @@ DEDUCTION_RATES = {
     ExpenseCategory.PROFESSIONAL_FEES: 1.0,      # 100% deductible
     ExpenseCategory.RENT_LEASE: 1.0,             # 100% deductible
     ExpenseCategory.LOAN_INTEREST: 1.0,          # 100% deductible (interest only)
+    ExpenseCategory.PERSONAL: 0.0,               # Not a business deduction
     ExpenseCategory.OTHER_EXPENSES: 1.0,         # 100% deductible
     ExpenseCategory.UNCATEGORIZED: 0.0,          # 0% - Safety default until categorized
 }

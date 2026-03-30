@@ -20,6 +20,7 @@ import {
   Link2,
   Search,
   X,
+  UserCircle,
 } from "lucide-react";
 import Link from "next/link";
 import { expensesApi, cardsApi } from "@/lib/firebase-api";
@@ -117,6 +118,7 @@ const categoryIcons: Record<string, React.ReactNode> = {
   tolls_scales: <Scale className="w-4 h-4" />,
   office_admin: <FileText className="w-4 h-4" />,
   licenses_dues: <FileCheck className="w-4 h-4" />,
+  personal: <UserCircle className="w-4 h-4" />,
   uncategorized: <HelpCircle className="w-4 h-4" />,
 };
 

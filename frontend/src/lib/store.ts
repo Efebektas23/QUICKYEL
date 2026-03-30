@@ -57,6 +57,7 @@ export const categoryLabels: Record<string, string> = {
   rent_lease: "Rent / Lease",
   depreciation_cca: "Depreciation (CCA)",
   loan_interest: "Loan Interest",
+  personal: "Personel",
   other_expenses: "Other Expenses",
   uncategorized: "Uncategorized",
 };
@@ -78,6 +79,7 @@ export const categoryIcons: Record<string, string> = {
   rent_lease: "Building",
   depreciation_cca: "TrendingDown",
   loan_interest: "Landmark",
+  personal: "UserCircle",
   other_expenses: "MoreHorizontal",
   uncategorized: "HelpCircle",
 };
@@ -99,6 +101,7 @@ export const categoryColors: Record<string, string> = {
   rent_lease: "#D946EF",
   depreciation_cca: "#22C55E",
   loan_interest: "#F43F5E",
+  personal: "#14B8A6",
   other_expenses: "#78716C",
   uncategorized: "#6B7280",
 };
