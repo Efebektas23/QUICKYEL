@@ -62,6 +62,31 @@ function sourceIcon(kind: ExpenseSourceKind) {
   return <PenLine className="w-3.5 h-3.5" />;
 }
 
+function RowCategorySelect({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <select
+      value={value}
+      disabled={disabled}
+      onChange={(e) => onChange(e.target.value)}
+      className="w-full max-w-[140px] rounded-md bg-slate-800 border border-slate-600 px-1.5 py-1 text-[11px] text-white"
+    >
+      {EXPENSE_CATEGORIES.map((c) => (
+        <option key={c.id} value={c.id}>
+          {c.label}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 interface CategoryExpenseDrawerProps {
   open: boolean;
   onClose: () => void;
@@ -91,6 +116,7 @@ export function CategoryExpenseDrawer({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkCategory, setBulkCategory] = useState("fuel");
   const [bulkSaving, setBulkSaving] = useState(false);
+  const [savingCategoryId, setSavingCategoryId] = useState<string | null>(null);
 
   useEffect(() => {
     if (open) {
@@ -171,6 +197,29 @@ export function CategoryExpenseDrawer({
     }
   };
 
+  const updateRowCategory = async (expenseId: string, newCategory: string) => {
+    const row = data?.transactions.find((t) => t.id === expenseId);
+    const current = row?.expense.category || "uncategorized";
+    if (newCategory === current) return;
+
+    setSavingCategoryId(expenseId);
+    try {
+      await expensesApi.update(expenseId, { category: newCategory });
+      toast.success("Category updated");
+      await queryClient.invalidateQueries({ queryKey: ["summary"] });
+      await queryClient.invalidateQueries({ queryKey: ["category-audit"] });
+      await queryClient.invalidateQueries({ queryKey: ["expenses"] });
+      await refetch();
+      if (selected?.id === expenseId && newCategory !== category) {
+        setSelected(null);
+      }
+    } catch (e: any) {
+      toast.error(e?.message || "Could not update category");
+    } finally {
+      setSavingCategoryId(null);
+    }
+  };
+
   const maxMonth = useMemo(() => {
     if (!data?.stats.monthly_trend.length) return 1;
     return Math.max(...data.stats.monthly_trend.map((m) => m.total_cad), 1);
@@ -232,7 +281,8 @@ export function CategoryExpenseDrawer({
               </h2>
               {!selected && (
                 <p className="text-xs text-slate-500 mt-0.5">
-                  {expectedCount} in summary · {formatCurrency(expectedTotalCad)} — drill-down
+                  {expectedCount} in summary · {formatCurrency(expectedTotalCad)} — use the
+                  category column to reclassify without leaving the dashboard
                   {isFetching && !isLoading ? " · refreshing…" : ""}
                 </p>
               )}
@@ -252,6 +302,9 @@ export function CategoryExpenseDrawer({
               row={selected}
               categoryColor={color}
               onCloseDetail={() => setSelected(null)}
+              drawerCategory={category}
+              onChangeCategory={updateRowCategory}
+              savingCategoryId={savingCategoryId}
             />
           ) : (
             <>
@@ -377,7 +430,9 @@ export function CategoryExpenseDrawer({
 
                 {isUncategorized && (
                   <div className="rounded-xl border border-slate-700 bg-slate-800/40 p-3 space-y-2">
-                    <p className="text-xs font-medium text-white">Bulk assign category</p>
+                    <p className="text-xs font-medium text-white">
+                      Bulk assign category (or change one-by-one in the table)
+                    </p>
                     <div className="flex flex-wrap gap-2">
                       <select
                         value={bulkCategory}
@@ -435,7 +490,8 @@ export function CategoryExpenseDrawer({
                     No transactions for this view.
                   </p>
                 ) : (
-                  <table className="w-full text-sm">
+                  <div className="overflow-x-auto -mx-1">
+                  <table className="w-full text-sm min-w-[520px]">
                     <thead className="sticky top-0 bg-slate-900/95 backdrop-blur z-10 border-b border-slate-800">
                       <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500">
                         {isUncategorized && (
@@ -444,7 +500,8 @@ export function CategoryExpenseDrawer({
                           </th>
                         )}
                         <th className="py-2 pl-1 pr-2">Date</th>
-                        <th className="py-2 pr-2">Vendor / description</th>
+                        <th className="py-2 pr-2 min-w-[120px]">Vendor / description</th>
+                        <th className="py-2 pr-2 w-[140px]">Category</th>
                         <th className="py-2 pr-2 text-right">Amount</th>
                         <th className="py-2 pr-3">Status</th>
                       </tr>
@@ -493,6 +550,19 @@ export function CategoryExpenseDrawer({
                               </span>
                             </div>
                           </td>
+                          <td
+                            className="py-2 pr-2 align-top"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <RowCategorySelect
+                              value={row.expense.category || "uncategorized"}
+                              disabled={savingCategoryId === row.id}
+                              onChange={(v) => updateRowCategory(row.id, v)}
+                            />
+                            {savingCategoryId === row.id && (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin text-yel-500 mt-1" />
+                            )}
+                          </td>
                           <td className="py-2 pr-2 text-right font-medium text-white align-top whitespace-nowrap">
                             {formatCurrency(row.amount_cad)}
                           </td>
@@ -502,24 +572,27 @@ export function CategoryExpenseDrawer({
                     </tbody>
                     <tfoot className="border-t border-slate-700 bg-slate-900/80">
                       <tr>
+                        {isUncategorized && <td className="py-2 w-10" />}
                         <td
-                          colSpan={isUncategorized ? 4 : 3}
-                          className="py-2 pl-3 text-slate-400 text-xs font-medium"
+                          colSpan={3}
+                          className="py-2 pl-1 text-slate-400 text-xs font-medium"
                         >
                           Visible total
                         </td>
-                        <td className="py-2 pr-3 text-right text-white font-semibold">
+                        <td className="py-2 pr-2 text-right text-white font-semibold whitespace-nowrap">
                           {formatCurrency(data.total_cad)}
                         </td>
+                        <td className="py-2 pr-3 w-24" />
                       </tr>
                     </tfoot>
                   </table>
+                  </div>
                 )}
               </div>
 
               <footer className="flex-shrink-0 border-t border-slate-800 p-3">
                 <p className="text-[11px] text-slate-500 truncate">
-                  Row opens audit trail ·{" "}
+                  Row (outside the category menu) opens audit trail ·{" "}
                   <Link href="/expenses" className="text-yel-500 hover:underline">
                     All expenses
                   </Link>
@@ -537,10 +610,16 @@ function TransactionAuditPanel({
   row,
   categoryColor,
   onCloseDetail,
+  drawerCategory,
+  onChangeCategory,
+  savingCategoryId,
 }: {
   row: CategoryAuditTransaction;
   categoryColor: string;
   onCloseDetail: () => void;
+  drawerCategory: string | null;
+  onChangeCategory: (expenseId: string, newCategory: string) => void;
+  savingCategoryId: string | null;
 }) {
   const e = row.expense;
   const isPdf =
@@ -566,6 +645,27 @@ function TransactionAuditPanel({
           Full page
         </Link>
       </div>
+
+      <section className="card p-4 space-y-2">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+          Category (quick edit)
+        </h3>
+        <div className="flex flex-wrap items-center gap-2">
+          <RowCategorySelect
+            value={e.category || "uncategorized"}
+            disabled={savingCategoryId === row.id}
+            onChange={(v) => onChangeCategory(row.id, v)}
+          />
+          {savingCategoryId === row.id && (
+            <Loader2 className="w-4 h-4 animate-spin text-yel-500" />
+          )}
+        </div>
+        {drawerCategory && (
+          <p className="text-[11px] text-slate-500">
+            Changing category moves this expense out of “{categoryLabels[drawerCategory] || drawerCategory}” in this list.
+          </p>
+        )}
+      </section>
 
       <section className="card p-4 space-y-2">
         <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500 flex items-center gap-2">
