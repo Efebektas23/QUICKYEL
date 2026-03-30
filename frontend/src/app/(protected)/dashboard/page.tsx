@@ -779,6 +779,7 @@ export default function DashboardPage() {
                       amount={data.total_net_cad ?? data.total_cad}
                       count={data.count}
                       total={expenseChartTotal}
+                      itcRecoverable={data.total_itc_cad ?? 0}
                       onSelect={() => setCategoryDrawerCategory(category)}
                     />
                   ))}
@@ -789,9 +790,36 @@ export default function DashboardPage() {
                     amount={ccaDeduction}
                     count={0}
                     total={expenseChartTotal}
+                    itcRecoverable={0}
                     onSelect={() => router.push("/assets")}
                   />
                 )}
+
+                <div className="mt-4 pt-4 border-t border-slate-700/80 rounded-xl bg-slate-800/40 px-3 py-3 space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-medium text-white">
+                        Recoverable GST/HST (ITC)
+                      </p>
+                      <p className="text-[11px] text-slate-500 mt-0.5 max-w-md">
+                        Total Input Tax Credits for this period (sum of per-category ITC above).
+                        Net category amounts are gross minus this recoverable portion; PST stays in
+                        the expense.
+                      </p>
+                    </div>
+                    <p className="text-lg font-bold text-emerald-400 tabular-nums">
+                      {formatCurrency(summary?.totals?.total_tax_recoverable ?? 0)}
+                    </p>
+                  </div>
+                  {(summary?.totals?.total_gst != null ||
+                    summary?.totals?.total_hst != null) && (
+                    <p className="text-[11px] text-slate-500">
+                      Recorded components: GST{" "}
+                      {formatCurrency(summary.totals.total_gst)} · HST{" "}
+                      {formatCurrency(summary.totals.total_hst)}
+                    </p>
+                  )}
+                </div>
               </div>
             </div>
           ) : (
@@ -1055,41 +1083,55 @@ function CategoryBar({
   amount,
   count,
   total,
+  itcRecoverable = 0,
   onSelect,
 }: {
   category: string;
   amount: number;
   count: number;
   total: number;
+  /** Effective recoverable GST+HST (ITC) for this category in the selected period. */
+  itcRecoverable?: number;
   onSelect?: () => void;
 }) {
   const percentage = total > 0 ? (amount / total) * 100 : 0;
   const color = categoryColors[category] || "#6B7280";
+  const showItc = category !== "depreciation_cca";
 
   return (
     <button
       type="button"
       onClick={onSelect}
-      className="w-full text-left space-y-2 rounded-xl p-2 -m-2 hover:bg-slate-800/40 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50"
+      className="w-full text-left space-y-1.5 rounded-xl p-2 -m-2 hover:bg-slate-800/40 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50"
     >
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
           <span
             className="w-3 h-3 rounded-full flex-shrink-0"
             style={{ backgroundColor: color }}
           />
-          <span className="text-sm text-slate-300">
+          <span className="text-sm text-slate-300 truncate">
             {categoryLabels[category] || category}
           </span>
-          <span className="text-xs text-slate-500">
+          <span className="text-xs text-slate-500 flex-shrink-0">
             {category === "depreciation_cca"
               ? "(annual CCA)"
               : `(${count})`}
           </span>
         </div>
-        <span className="text-sm font-medium text-white">
-          {formatCurrency(amount)}
-        </span>
+        <div className="text-right flex-shrink-0">
+          <p className="text-sm font-medium text-white tabular-nums">
+            {formatCurrency(amount)}
+          </p>
+          {showItc && (
+            <p
+              className="text-[11px] text-emerald-400/90 tabular-nums mt-0.5"
+              title="Recoverable GST/HST (Input Tax Credits) attributed to this category."
+            >
+              ITC {formatCurrency(itcRecoverable)}
+            </p>
+          )}
+        </div>
       </div>
       <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
         <motion.div

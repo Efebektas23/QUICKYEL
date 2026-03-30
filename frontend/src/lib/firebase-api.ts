@@ -3319,6 +3319,8 @@ export const exportApi = {
     const by_category: Record<string, {
       total_cad: number;
       total_net_cad: number;
+      /** Sum of effective recoverable ITC (GST+HST) per BC/category rules — matches net vs gross gap. */
+      total_itc_cad: number;
       count: number;
       total_deductible: number;
       total_gst: number;
@@ -3388,6 +3390,7 @@ export const exportApi = {
         by_category[cat] = {
           total_cad: 0,
           total_net_cad: 0,
+          total_itc_cad: 0,
           count: 0,
           total_deductible: 0,
           total_gst: 0,
@@ -3398,6 +3401,7 @@ export const exportApi = {
       }
       by_category[cat].total_cad += cadAmount;
       by_category[cat].total_net_cad += netCad;
+      by_category[cat].total_itc_cad += itcCad;
       by_category[cat].count += 1;
       by_category[cat].total_deductible += deductibleAmount;
       by_category[cat].total_gst += effectiveGst;
