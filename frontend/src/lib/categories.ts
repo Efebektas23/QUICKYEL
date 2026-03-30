@@ -128,7 +128,7 @@ export const EXPENSE_CATEGORIES: CategoryConfig[] = [
   },
   {
     id: "personal",
-    label: "Personel",
+    label: "Personal",
     tooltip: "Personal / non-business spending you want to track separately (not deductible on T2125).",
     deductionRate: 0.0,
     icon: "UserCircle",

@@ -57,7 +57,7 @@ export const categoryLabels: Record<string, string> = {
   rent_lease: "Rent / Lease",
   depreciation_cca: "Depreciation (CCA)",
   loan_interest: "Loan Interest",
-  personal: "Personel",
+  personal: "Personal",
   other_expenses: "Other Expenses",
   uncategorized: "Uncategorized",
 };

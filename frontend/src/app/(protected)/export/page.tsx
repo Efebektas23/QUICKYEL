@@ -222,6 +222,7 @@ export default function ExportPage() {
         </h2>
         <p className="text-xs text-slate-500 mb-4">
           Category totals are net of recoverable GST/HST (ITC); PST remains in the expense. Tax columns reflect recorded components.
+          Personal appears for reference; footer totals exclude it (same as business P&amp;L).
         </p>
         {isLoading ? (
           <div className="space-y-3">

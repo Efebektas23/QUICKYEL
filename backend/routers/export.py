@@ -15,7 +15,11 @@ from database import get_db
 from models import User, Expense, ExpenseCategory
 from routers.auth import get_current_user
 from bc_expense_tax import effective_recoverable_itc_cad, itc_source_label, net_expense_cad
-from expense_operating import operating_expenses_for_export
+from expense_operating import (
+    operating_expenses_for_export,
+    operating_expenses_excluding_assets_only,
+    is_excluded_from_business_pl,
+)
 
 router = APIRouter()
 
@@ -422,22 +426,23 @@ async def get_summary(
         query = query.where(Expense.transaction_date <= end_date)
     
     result = await db.execute(query)
-    expenses = operating_expenses_for_export(list(result.scalars().all()))
-    
-    # Calculate summaries with separate tax totals
-    total_cad = sum(e.cad_amount or 0 for e in expenses)
-    total_gst = sum(e.gst_amount or 0 for e in expenses)  # GST only (5%)
-    total_hst = sum(e.hst_amount or 0 for e in expenses)  # HST only (13-15%)
-    total_pst = sum(e.pst_amount or 0 for e in expenses)  # PST (not recoverable)
+    operating = operating_expenses_excluding_assets_only(list(result.scalars().all()))
+    pl_for_totals = [e for e in operating if not is_excluded_from_business_pl(e)]
+
+    # Calculate summaries with separate tax totals (Personel excluded from P&L totals)
+    total_cad = sum(e.cad_amount or 0 for e in pl_for_totals)
+    total_gst = sum(e.gst_amount or 0 for e in pl_for_totals)  # GST only (5%)
+    total_hst = sum(e.hst_amount or 0 for e in pl_for_totals)  # HST only (13-15%)
+    total_pst = sum(e.pst_amount or 0 for e in pl_for_totals)  # PST (not recoverable)
     total_tax = total_gst + total_hst + total_pst         # Total all taxes
     total_itc_recoverable = total_gst + total_hst         # Only GST + HST are ITC recoverable
-    
+
     # Calculate total potential tax deductions (T2125 form)
-    total_potential_deductions = sum(calculate_deductible_amount(e) for e in expenses)
-    
-    # By category with deduction info and separate tax columns
+    total_potential_deductions = sum(calculate_deductible_amount(e) for e in pl_for_totals)
+
+    # By category (includes Personel for display; totals above exclude it)
     by_category = {}
-    for expense in expenses:
+    for expense in operating:
         cat = expense.category.value
         if cat not in by_category:
             by_category[cat] = {
@@ -466,7 +471,7 @@ async def get_summary(
         "e_transfer": 0,
         "unknown": 0
     }
-    for expense in expenses:
+    for expense in pl_for_totals:
         source = expense.payment_source.value
         if source not in by_source:
             by_source["unknown"] += expense.cad_amount or 0
@@ -483,7 +488,7 @@ async def get_summary(
             "end": end_date.isoformat() if end_date else None
         },
         "totals": {
-            "expense_count": len(expenses),
+            "expense_count": len(pl_for_totals),
             "total_cad": round(total_cad, 2),
             # Separate tax totals
             "total_gst": round(total_gst, 2),               # GST only (5%)

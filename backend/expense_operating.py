@@ -29,3 +29,8 @@ def operating_expenses_for_export(expenses: List[Expense]) -> List[Expense]:
         for e in expenses
         if not is_expense_reclassified_to_asset(e) and not is_excluded_from_business_pl(e)
     ]
+
+
+def operating_expenses_excluding_assets_only(expenses: List[Expense]) -> List[Expense]:
+    """Operating rows only (still includes Personel for category breakdown)."""
+    return [e for e in expenses if not is_expense_reclassified_to_asset(e)]

@@ -44,6 +44,7 @@ import {
   revenueApi,
   isExpenseReclassifiedToAsset,
   isExcludedFromBusinessPl,
+  EXCLUDED_FROM_BUSINESS_PL_CATEGORY,
 } from "@/lib/firebase-api";
 import { formatCurrency, formatDate, cn } from "@/lib/utils";
 import { categoryLabels, categoryColors } from "@/lib/store";
@@ -257,6 +258,11 @@ export default function DashboardPage() {
     }
     return rows.sort((a, b) => b.amount - a.amount);
   }, [summary?.by_category, ccaDeduction]);
+
+  const donutSegmentTotal = useMemo(
+    () => categoryDonutSlices.reduce((s, x) => s + x.amount, 0),
+    [categoryDonutSlices],
+  );
 
   // Payment source breakdown
   const bankChecking = summary?.by_payment_source?.bank_checking || 0;
@@ -756,7 +762,8 @@ export default function DashboardPage() {
                 <Link href="/assets" className="text-amber-500 hover:underline">
                   Assets
                 </Link>
-                . Depreciation (CCA) appears for full calendar-year periods (FY).
+                . Depreciation (CCA) appears for full calendar-year periods (FY). Personal is shown
+                in the list and ring; center Total and ITC below exclude it (not in business P&amp;L).
               </p>
             </div>
             <div className="flex items-center gap-2 shrink-0">
@@ -780,7 +787,8 @@ export default function DashboardPage() {
               <div className="mx-auto md:mx-0 flex-shrink-0">
                 <CategoryDonut
                   categories={categoryDonutSlices}
-                  total={expenseChartTotal}
+                  centerTotal={expenseChartTotal}
+                  segmentTotal={donutSegmentTotal}
                   onSelectCategory={(c) => {
                     if (c === "depreciation_cca") router.push("/assets");
                     else setCategoryDrawerCategory(c);
@@ -800,7 +808,7 @@ export default function DashboardPage() {
                       category={category}
                       amount={data.total_net_cad ?? data.total_cad}
                       count={data.count}
-                      total={expenseChartTotal}
+                      total={donutSegmentTotal}
                       itcRecoverable={data.total_itc_cad ?? 0}
                       onSelect={() => setCategoryDrawerCategory(category)}
                     />
@@ -811,7 +819,7 @@ export default function DashboardPage() {
                     category="depreciation_cca"
                     amount={ccaDeduction}
                     count={0}
-                    total={expenseChartTotal}
+                    total={donutSegmentTotal}
                     itcRecoverable={0}
                     onSelect={() => router.push("/assets")}
                   />
@@ -824,9 +832,9 @@ export default function DashboardPage() {
                         Recoverable GST/HST (ITC)
                       </p>
                       <p className="text-[11px] text-slate-500 mt-0.5 max-w-md">
-                        Total Input Tax Credits for this period (sum of per-category ITC above).
-                        Net category amounts are gross minus this recoverable portion; PST stays in
-                        the expense.
+                        Total Input Tax Credits for this period (business categories only; Personal
+                        excluded). Net category amounts are gross minus this recoverable portion; PST
+                        stays in the expense.
                       </p>
                     </div>
                     <p className="text-lg font-bold text-emerald-400 tabular-nums">
@@ -1123,7 +1131,9 @@ function CategoryBar({
 }) {
   const percentage = total > 0 ? (amount / total) * 100 : 0;
   const color = categoryColors[category] || "#6B7280";
-  const showItc = category !== "depreciation_cca";
+  const showItc =
+    category !== "depreciation_cca" &&
+    category !== EXCLUDED_FROM_BUSINESS_PL_CATEGORY;
 
   return (
     <button
@@ -1176,11 +1186,15 @@ function CategoryBar({
 // SVG Donut Chart for category breakdown
 function CategoryDonut({
   categories,
-  total,
+  centerTotal,
+  segmentTotal,
   onSelectCategory,
 }: {
   categories: { category: string; amount: number; color: string }[];
-  total: number;
+  /** Donut center label (business + CCA; excludes Personal). */
+  centerTotal: number;
+  /** Sum of slice amounts — used for arc angles (includes Personal when present). */
+  segmentTotal: number;
   onSelectCategory?: (category: string) => void;
 }) {
   const size = 180;
@@ -1191,7 +1205,7 @@ function CategoryDonut({
   // Calculate arc segments
   let cumulativePercent = 0;
   const segments = categories.map((cat) => {
-    const percent = total > 0 ? cat.amount / total : 0;
+    const percent = segmentTotal > 0 ? cat.amount / segmentTotal : 0;
     const offset = cumulativePercent;
     cumulativePercent += percent;
     return {
@@ -1203,7 +1217,7 @@ function CategoryDonut({
   });
 
   const handleDonutClick = (e: React.MouseEvent<SVGSVGElement>) => {
-    if (!onSelectCategory || total <= 0 || segments.length === 0) return;
+    if (!onSelectCategory || segmentTotal <= 0 || segments.length === 0) return;
     const svg = e.currentTarget;
     const pt = svg.createSVGPoint();
     pt.x = e.clientX;
@@ -1275,7 +1289,7 @@ function CategoryDonut({
       {/* Center label */}
       <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
         <p className="text-xs text-slate-500 uppercase tracking-wider">Total</p>
-        <p className="text-lg font-bold text-white">{formatCurrency(total)}</p>
+        <p className="text-lg font-bold text-white">{formatCurrency(centerTotal)}</p>
       </div>
     </div>
   );

@@ -2875,7 +2875,7 @@ const categoryDisplayNames: Record<string, string> = {
   professional_fees: "Professional Fees",
   rent_lease: "Rent / Lease",
   loan_interest: "Loan Interest",
-  personal: "Personel",
+  personal: "Personal",
   other_expenses: "Other Expenses",
   uncategorized: "Uncategorized",
 };
@@ -3311,7 +3311,6 @@ export const exportApi = {
     // Only count verified expenses for summary (matching backend behavior)
     let filteredExpenses = allExpenses.expenses.filter(e => e.is_verified);
     filteredExpenses = filteredExpenses.filter((e) => !isExpenseReclassifiedToAsset(e));
-    filteredExpenses = filteredExpenses.filter((e) => !isExcludedFromBusinessPl(e));
 
     // Apply date filters if provided
     if (params?.start_date) {
@@ -3328,9 +3327,12 @@ export const exportApi = {
       );
     }
 
+    const personalForBreakdown = filteredExpenses.filter((e) => isExcludedFromBusinessPl(e));
+    const plExpenses = filteredExpenses.filter((e) => !isExcludedFromBusinessPl(e));
+
     const expenses = {
       ...allExpenses,
-      expenses: filteredExpenses
+      expenses: plExpenses
     };
 
 
@@ -3469,6 +3471,45 @@ export const exportApi = {
         by_payment_source.unknown += netCad;
       }
     });
+
+    // Personal (Personel): show in by_category / dashboard chart only — not in totals above
+    const catPersonal = EXCLUDED_FROM_BUSINESS_PL_CATEGORY;
+    for (const expense of personalForBreakdown) {
+      const cadAmount = expense.cad_amount || 0;
+      const netCad = getNetExpenseCad(expense);
+      const itcCad = getEffectiveRecoverableItcCad(expense);
+      const gstAmount = expense.gst_amount || 0;
+      const hstAmount = expense.hst_amount || 0;
+      const pstAmount = expense.pst_amount || 0;
+      const effectiveGst = gstAmount;
+      const effectiveHst = (gstAmount === 0 && hstAmount === 0 && expense.tax_amount)
+        ? expense.tax_amount
+        : hstAmount;
+      const effectivePst = pstAmount;
+      const deductibleAmount = calculateDeductibleAmount(expense);
+      if (!by_category[catPersonal]) {
+        by_category[catPersonal] = {
+          total_cad: 0,
+          total_net_cad: 0,
+          total_itc_cad: 0,
+          count: 0,
+          total_deductible: 0,
+          total_gst: 0,
+          total_hst: 0,
+          total_pst: 0,
+          total_tax: 0,
+        };
+      }
+      by_category[catPersonal].total_cad += cadAmount;
+      by_category[catPersonal].total_net_cad += netCad;
+      by_category[catPersonal].total_itc_cad += itcCad;
+      by_category[catPersonal].count += 1;
+      by_category[catPersonal].total_deductible += deductibleAmount;
+      by_category[catPersonal].total_gst += effectiveGst;
+      by_category[catPersonal].total_hst += effectiveHst;
+      by_category[catPersonal].total_pst += effectivePst;
+      by_category[catPersonal].total_tax += effectiveGst + effectiveHst + effectivePst;
+    }
 
     // Calculate 50% deductible for meals (CRA rule)
     const mealsTotal = by_category["meals_entertainment"]?.total_cad || 0;
