@@ -1225,6 +1225,110 @@ export const cardsApi = {
 
 // ============ REVENUE ============
 
+/**
+ * Normalize RBC CSV / bank dates to YYYY-MM-DD for Bank of Canada FX lookups.
+ * RBC Canada exports use M/D/YYYY (e.g. 1/2/2025 = January 2, 2025).
+ * Avoids Date.parse timezone drift vs statement calendar day.
+ */
+export function bankStatementDateToYMD(raw: string | null | undefined): string {
+  const trimmed = (raw || "").trim();
+  const todayYmd = () => {
+    const n = new Date();
+    return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
+  };
+  if (!trimmed) return todayYmd();
+  if (/^\d{4}-\d{2}-\d{2}/.test(trimmed)) {
+    return trimmed.slice(0, 10);
+  }
+  const md = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (md) {
+    const month = parseInt(md[1], 10);
+    const day = parseInt(md[2], 10);
+    const year = parseInt(md[3], 10);
+    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    }
+  }
+  const d = new Date(trimmed);
+  if (!isNaN(d.getTime())) {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  }
+  return todayYmd();
+}
+
+function ymdAddCalendarDays(ymd: string, deltaDays: number): string {
+  const [y, m, d] = ymd.split("-").map(Number);
+  const t = Date.UTC(y, m - 1, d) + deltaDays * 86400000;
+  const x = new Date(t);
+  return `${x.getUTCFullYear()}-${String(x.getUTCMonth() + 1).padStart(2, "0")}-${String(x.getUTCDate()).padStart(2, "0")}`;
+}
+
+/**
+ * Bank of Canada USD/CAD — uses calendar YYYY-MM-DD only (no UTC midnight shift).
+ */
+async function fetchBankOfCanadaUsdcadForYmd(dateStr: string): Promise<number> {
+  try {
+    console.log(`🏦 Bank of Canada: Fetching exchange rate for ${dateStr}...`);
+
+    const apiUrl = `https://www.bankofcanada.ca/valet/observations/FXUSDCAD/json?start_date=${dateStr}&end_date=${dateStr}`;
+    const response = await fetch(apiUrl);
+
+    if (!response.ok) {
+      console.warn(`🏦 Bank of Canada API error: ${response.status}`);
+      throw new Error("Failed to fetch exchange rate");
+    }
+
+    const data = await response.json();
+    const observations = data.observations;
+
+    if (observations && observations.length > 0) {
+      const rate = parseFloat(observations[0].FXUSDCAD.v);
+      const rateDate = observations[0].d;
+      console.log(`🏦 ✅ Rate found for ${rateDate}: 1 USD = ${rate} CAD`);
+      return rate;
+    }
+
+    console.log(`🏦 ⚠️ No rate for ${dateStr} (weekend/holiday), searching previous business days...`);
+
+    const endDateStr = dateStr;
+    const startDateStr = ymdAddCalendarDays(dateStr, -7);
+    const rangeUrl = `https://www.bankofcanada.ca/valet/observations/FXUSDCAD/json?start_date=${startDateStr}&end_date=${endDateStr}`;
+    const rangeResponse = await fetch(rangeUrl);
+
+    if (rangeResponse.ok) {
+      const rangeData = await rangeResponse.json();
+      if (rangeData.observations && rangeData.observations.length > 0) {
+        const lastObs = rangeData.observations[rangeData.observations.length - 1];
+        const rate = parseFloat(lastObs.FXUSDCAD.v);
+        const rateDate = lastObs.d;
+        console.log(`🏦 ✅ Closest business day rate (${rateDate}): 1 USD = ${rate} CAD`);
+        return rate;
+      }
+    }
+
+    console.log(`🏦 ⚠️ No rate in range, fetching most recent available...`);
+    const fallbackResponse = await fetch(
+      `https://www.bankofcanada.ca/valet/observations/FXUSDCAD/json?recent=1`
+    );
+
+    if (fallbackResponse.ok) {
+      const fallbackData = await fallbackResponse.json();
+      if (fallbackData.observations && fallbackData.observations.length > 0) {
+        const rate = parseFloat(fallbackData.observations[0].FXUSDCAD.v);
+        const rateDate = fallbackData.observations[0].d;
+        console.log(`🏦 ⚠️ Using most recent rate (${rateDate}): 1 USD = ${rate} CAD`);
+        return rate;
+      }
+    }
+
+    console.warn(`🏦 ⚠️ Using fallback rate: 1.40`);
+    return 1.4;
+  } catch (error) {
+    console.error("🏦 ❌ Error fetching exchange rate:", error);
+    return 1.4;
+  }
+}
+
 export const revenueApi = {
   /**
    * Create a new revenue entry
@@ -1422,89 +1526,20 @@ export const revenueApi = {
   },
 
   /**
-   * Fetch Bank of Canada exchange rate for a specific date
-   * Uses the official Bank of Canada Valet API for accurate CRA-compliant rates
-   * If the date is a weekend/holiday, finds the closest business day BEFORE that date
+   * Fetch Bank of Canada USD/CAD for a JavaScript Date using **local** calendar day
+   * (avoids mixing UTC midnight from ISO strings with the wrong BoC date).
    */
   fetchExchangeRate: async (date: Date): Promise<number> => {
-    try {
-      // Format date as YYYY-MM-DD
-      const dateStr = date.toISOString().split('T')[0];
+    const ymd = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+    return fetchBankOfCanadaUsdcadForYmd(ymd);
+  },
 
-      console.log(`🏦 Bank of Canada: Fetching exchange rate for ${dateStr}...`);
-
-      // Bank of Canada Valet API - try exact date first
-      const apiUrl = `https://www.bankofcanada.ca/valet/observations/FXUSDCAD/json?start_date=${dateStr}&end_date=${dateStr}`;
-      console.log(`🏦 API URL: ${apiUrl}`);
-
-      const response = await fetch(apiUrl);
-
-      if (!response.ok) {
-        console.warn(`🏦 Bank of Canada API error: ${response.status}`);
-        throw new Error("Failed to fetch exchange rate");
-      }
-
-      const data = await response.json();
-      const observations = data.observations;
-
-      if (observations && observations.length > 0) {
-        const rate = parseFloat(observations[0].FXUSDCAD.v);
-        const rateDate = observations[0].d;
-        console.log(`🏦 ✅ Rate found for ${rateDate}: 1 USD = ${rate} CAD`);
-        return rate;
-      }
-
-      // If no rate for that date (weekend/holiday), look back up to 7 days to find the closest business day
-      console.log(`🏦 ⚠️ No rate for ${dateStr} (weekend/holiday), searching previous business days...`);
-
-      // Calculate a date range: from 7 days before to the target date
-      const endDate = new Date(date);
-      const startDate = new Date(date);
-      startDate.setDate(startDate.getDate() - 7);
-
-      const startDateStr = startDate.toISOString().split('T')[0];
-      const endDateStr = endDate.toISOString().split('T')[0];
-
-      const rangeUrl = `https://www.bankofcanada.ca/valet/observations/FXUSDCAD/json?start_date=${startDateStr}&end_date=${endDateStr}`;
-      console.log(`🏦 Range API URL: ${rangeUrl}`);
-
-      const rangeResponse = await fetch(rangeUrl);
-
-      if (rangeResponse.ok) {
-        const rangeData = await rangeResponse.json();
-        if (rangeData.observations && rangeData.observations.length > 0) {
-          // Get the LAST (most recent) observation in the range - closest to target date
-          const lastObs = rangeData.observations[rangeData.observations.length - 1];
-          const rate = parseFloat(lastObs.FXUSDCAD.v);
-          const rateDate = lastObs.d;
-          console.log(`🏦 ✅ Closest business day rate (${rateDate}): 1 USD = ${rate} CAD`);
-          return rate;
-        }
-      }
-
-      // If still no data, use the most recent available rate (for very old dates)
-      console.log(`🏦 ⚠️ No rate in range, fetching most recent available...`);
-      const fallbackResponse = await fetch(
-        `https://www.bankofcanada.ca/valet/observations/FXUSDCAD/json?recent=1`
-      );
-
-      if (fallbackResponse.ok) {
-        const fallbackData = await fallbackResponse.json();
-        if (fallbackData.observations && fallbackData.observations.length > 0) {
-          const rate = parseFloat(fallbackData.observations[0].FXUSDCAD.v);
-          const rateDate = fallbackData.observations[0].d;
-          console.log(`🏦 ⚠️ Using most recent rate (${rateDate}): 1 USD = ${rate} CAD`);
-          return rate;
-        }
-      }
-
-      // Default fallback rate
-      console.warn(`🏦 ⚠️ Using fallback rate: 1.40`);
-      return 1.40;
-    } catch (error) {
-      console.error("🏦 ❌ Error fetching exchange rate:", error);
-      return 1.40; // Fallback rate
-    }
+  /**
+   * Same as fetchExchangeRate but for raw bank/PDF dates (RBC M/D/YYYY, ISO, etc.).
+   * Use this for CSV import rows so the BoC query matches the statement date.
+   */
+  fetchExchangeRateForBankDate: async (raw: string | null | undefined): Promise<number> => {
+    return fetchBankOfCanadaUsdcadForYmd(bankStatementDateToYMD(raw));
   },
 };
 
@@ -2270,6 +2305,17 @@ export const bankImportApi = {
 
     const newFingerprints: string[] = [];
 
+    /** One BoC call per statement calendar day (many rows share the same date). */
+    const usdRateByStatementYmd = new Map<string, number>();
+    const getUsdRateForBankRow = async (transactionDateRaw: string) => {
+      const ymd = bankStatementDateToYMD(transactionDateRaw);
+      const cached = usdRateByStatementYmd.get(ymd);
+      if (cached !== undefined) return cached;
+      const rate = await revenueApi.fetchExchangeRateForBankDate(transactionDateRaw);
+      usdRateByStatementYmd.set(ymd, rate);
+      return rate;
+    };
+
     for (let i = 0; i < transactions.length; i++) {
       const tx = transactions[i];
       const fp = fingerprints[i];
@@ -2302,8 +2348,13 @@ export const bankImportApi = {
             newFingerprints.push(fp);
           } else {
             // No match - create new expense as before
-            const isUsd = !tx.amount_cad && tx.amount_usd != null && tx.amount_usd !== 0;
-            const originalAmount = Math.abs(isUsd ? (tx.amount_usd || 0) : (tx.amount_cad || 0));
+            const cadVal = tx.amount_cad;
+            const usdVal = tx.amount_usd;
+            const isUsd =
+              usdVal != null &&
+              usdVal !== 0 &&
+              (cadVal == null || cadVal === 0);
+            const originalAmount = Math.abs(isUsd ? (usdVal || 0) : (cadVal || 0));
             const currency = isUsd ? "USD" : "CAD";
 
             let exchangeRate = 1.0;
@@ -2311,8 +2362,7 @@ export const bankImportApi = {
 
             if (isUsd) {
               try {
-                const txDate = tx.transaction_date ? new Date(tx.transaction_date) : new Date();
-                exchangeRate = await revenueApi.fetchExchangeRate(txDate);
+                exchangeRate = await getUsdRateForBankRow(tx.transaction_date || "");
                 cadAmount = Math.round(originalAmount * exchangeRate * 100) / 100;
               } catch {
                 exchangeRate = 1.40;
@@ -2350,9 +2400,13 @@ export const bankImportApi = {
           }
           newFingerprints.push(fp);
         } else if (tx.type === "income") {
-          // Determine if this is a USD or CAD transaction
-          const isUsd = !tx.amount_cad && tx.amount_usd != null && tx.amount_usd !== 0;
-          const originalAmount = Math.abs(isUsd ? (tx.amount_usd || 0) : (tx.amount_cad || 0));
+          const cadVal = tx.amount_cad;
+          const usdVal = tx.amount_usd;
+          const isUsd =
+            usdVal != null &&
+            usdVal !== 0 &&
+            (cadVal == null || cadVal === 0);
+          const originalAmount = Math.abs(isUsd ? (usdVal || 0) : (cadVal || 0));
           const currency = isUsd ? "USD" : "CAD";
 
           let exchangeRate = 1.0;
@@ -2360,8 +2414,7 @@ export const bankImportApi = {
 
           if (isUsd) {
             try {
-              const txDate = tx.transaction_date ? new Date(tx.transaction_date) : new Date();
-              exchangeRate = await revenueApi.fetchExchangeRate(txDate);
+              exchangeRate = await getUsdRateForBankRow(tx.transaction_date || "");
               cadAmount = Math.round(originalAmount * exchangeRate * 100) / 100;
             } catch {
               exchangeRate = 1.40;

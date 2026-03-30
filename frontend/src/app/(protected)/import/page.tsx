@@ -1177,13 +1177,11 @@ function FactoringImportSection() {
           id: "factoring-import",
         });
         try {
-          // Use the date range start or the first entry's date for the rate
-          const rateDate = reportData.date_range?.start
-            ? new Date(reportData.date_range.start)
-            : selected[0]?.date
-              ? new Date(selected[0].date)
-              : new Date();
-          exchangeRate = await revenueApi.fetchExchangeRate(rateDate);
+          const rateDateRaw =
+            reportData.date_range?.start ||
+            selected[0]?.date ||
+            "";
+          exchangeRate = await revenueApi.fetchExchangeRateForBankDate(rateDateRaw);
         } catch {
           exchangeRate = 1.40; // Fallback if BoC API fails
           console.warn("Failed to fetch BoC rate, using fallback 1.40");

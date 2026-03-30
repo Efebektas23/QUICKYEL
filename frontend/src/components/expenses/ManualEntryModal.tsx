@@ -69,7 +69,7 @@ export function ManualEntryModal({ isOpen, onClose, onSuccess }: ManualEntryModa
     } else if (formData.date) {
       setIsFetchingRate(true);
       try {
-        const rate = await revenueApi.fetchExchangeRate(new Date(formData.date));
+        const rate = await revenueApi.fetchExchangeRateForBankDate(formData.date);
         setFormData(prev => ({ ...prev, exchange_rate: rate.toFixed(4) }));
       } catch (error) {
         console.error("Failed to fetch rate:", error);
@@ -88,7 +88,7 @@ export function ManualEntryModal({ isOpen, onClose, onSuccess }: ManualEntryModa
     if (formData.currency === "USD") {
       setIsFetchingRate(true);
       try {
-        const rate = await revenueApi.fetchExchangeRate(new Date(newDate));
+        const rate = await revenueApi.fetchExchangeRateForBankDate(newDate);
         setFormData(prev => ({ ...prev, exchange_rate: rate.toFixed(4) }));
       } catch (error) {
         console.error("Failed to fetch rate:", error);

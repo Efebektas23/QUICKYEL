@@ -419,7 +419,7 @@ function AddRevenueModal({
         console.log(`💱 Rate Confirmation Date: ${result.date}`);
         console.log(`💱 Fetching Bank of Canada rate for this specific date...`);
         try {
-          const rate = await revenueApi.fetchExchangeRate(new Date(result.date));
+          const rate = await revenueApi.fetchExchangeRateForBankDate(result.date);
           exchangeRate = rate.toFixed(4);
           console.log(`💱 ✅ Exchange rate for ${result.date}: 1 USD = ${exchangeRate} CAD`);
         } catch (err) {
@@ -465,7 +465,7 @@ function AddRevenueModal({
     if (formData.currency === "USD") {
       setIsFetchingRate(true);
       try {
-        const rate = await revenueApi.fetchExchangeRate(new Date(newDate));
+        const rate = await revenueApi.fetchExchangeRateForBankDate(newDate);
         setFormData(prev => ({ ...prev, exchange_rate: rate.toFixed(4) }));
       } catch (error) {
         console.error("Failed to fetch rate:", error);
@@ -483,7 +483,7 @@ function AddRevenueModal({
     } else if (formData.date) {
       setIsFetchingRate(true);
       try {
-        const rate = await revenueApi.fetchExchangeRate(new Date(formData.date));
+        const rate = await revenueApi.fetchExchangeRateForBankDate(formData.date);
         setFormData(prev => ({ ...prev, exchange_rate: rate.toFixed(4) }));
       } catch (error) {
         console.error("Failed to fetch rate:", error);
