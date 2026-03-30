@@ -222,7 +222,7 @@ export default function DashboardPage() {
 
   // Calculate profitability metrics
   const grossRevenue = revenueSummary?.total_cad || 0;
-  const totalOperatingExpenses = summary?.totals?.total_cad || 0;
+  const totalOperatingExpenses = summary?.totals?.total_net_expense_cad ?? summary?.totals?.total_cad ?? 0;
   const ccaDeduction = summary?.totals?.cca_deduction_cad || 0;
   const totalExpensesForPnl =
     summary?.totals?.total_pnl_expense_cad ??
@@ -239,7 +239,7 @@ export default function DashboardPage() {
     const rows = Object.entries(summary.by_category).map(
       ([cat, data]: [string, any]) => ({
         category: cat,
-        amount: data.total_cad,
+        amount: data.total_net_cad ?? data.total_cad,
         color: categoryColors[cat] || "#6B7280",
       }),
     );
@@ -639,11 +639,18 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
           title="Total Expenses"
-          value={formatCurrency(summary?.totals?.total_cad)}
-          subtitle="All verified expenses"
+          value={formatCurrency(
+            summary?.totals?.total_net_expense_cad ?? summary?.totals?.total_cad,
+          )}
+          subtitle="Net of recoverable GST/HST (ITC)"
           icon={<DollarSign className="w-5 h-5" />}
           color="yel"
           loading={summaryLoading}
+          tooltip={
+            summary?.totals?.total_cad != null
+              ? `Gross (bank/receipt) total: ${formatCurrency(summary.totals.total_cad)}`
+              : undefined
+          }
         />
         <StatCard
           title="Receipts"
@@ -752,17 +759,24 @@ export default function DashboardPage() {
                 <CategoryDonut
                   categories={categoryDonutSlices}
                   total={expenseChartTotal}
+                  onSelectCategory={(c) => {
+                    if (c === "depreciation_cca") router.push("/assets");
+                    else setCategoryDrawerCategory(c);
+                  }}
                 />
               </div>
               {/* Category Bars */}
               <div className="flex-1 space-y-3 w-full">
                 {Object.entries(summary.by_category)
-                  .sort(([, a]: [string, any], [, b]: [string, any]) => b.total_cad - a.total_cad)
+                  .sort(
+                    ([, a]: [string, any], [, b]: [string, any]) =>
+                      (b.total_net_cad ?? b.total_cad) - (a.total_net_cad ?? a.total_cad),
+                  )
                   .map(([category, data]: [string, any]) => (
                     <CategoryBar
                       key={category}
                       category={category}
-                      amount={data.total_cad}
+                      amount={data.total_net_cad ?? data.total_cad}
                       count={data.count}
                       total={expenseChartTotal}
                       onSelect={() => setCategoryDrawerCategory(category)}
@@ -850,7 +864,8 @@ export default function DashboardPage() {
         periodEnd={currentPeriod.end}
         expectedTotalCad={
           categoryDrawerCategory && summary?.by_category?.[categoryDrawerCategory]
-            ? summary.by_category[categoryDrawerCategory].total_cad
+            ? summary.by_category[categoryDrawerCategory].total_net_cad ??
+              summary.by_category[categoryDrawerCategory].total_cad
             : 0
         }
         expectedCount={
@@ -1093,9 +1108,11 @@ function CategoryBar({
 function CategoryDonut({
   categories,
   total,
+  onSelectCategory,
 }: {
   categories: { category: string; amount: number; color: string }[];
   total: number;
+  onSelectCategory?: (category: string) => void;
 }) {
   const size = 180;
   const strokeWidth = 28;
@@ -1116,9 +1133,47 @@ function CategoryDonut({
     };
   });
 
+  const handleDonutClick = (e: React.MouseEvent<SVGSVGElement>) => {
+    if (!onSelectCategory || total <= 0 || segments.length === 0) return;
+    const svg = e.currentTarget;
+    const pt = svg.createSVGPoint();
+    pt.x = e.clientX;
+    pt.y = e.clientY;
+    const ctm = svg.getScreenCTM();
+    if (!ctm) return;
+    const local = pt.matrixTransform(ctm.inverse());
+    const cx = size / 2;
+    const cy = size / 2;
+    const dx = local.x - cx;
+    const dy = local.y - cy;
+    const dist = Math.hypot(dx, dy);
+    const inner = radius - strokeWidth / 2;
+    const outer = radius + strokeWidth / 2;
+    if (dist < inner - 3 || dist > outer + 3) return;
+    let ang = Math.atan2(dy, dx);
+    if (ang < 0) ang += 2 * Math.PI;
+    const t = ang / (2 * Math.PI);
+    let cum = 0;
+    for (const seg of segments) {
+      cum += seg.percent;
+      if (t <= cum + 1e-9) {
+        onSelectCategory(seg.category);
+        break;
+      }
+    }
+  };
+
   return (
     <div className="relative" style={{ width: size, height: size }}>
-      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="-rotate-90">
+      <svg
+        width={size}
+        height={size}
+        viewBox={`0 0 ${size} ${size}`}
+        className={cn("-rotate-90", onSelectCategory && "cursor-pointer")}
+        onClick={handleDonutClick}
+        role={onSelectCategory ? "img" : undefined}
+        aria-label={onSelectCategory ? "Expenses by category — click a segment to view transactions" : undefined}
+      >
         {/* Background ring */}
         <circle
           cx={size / 2}
@@ -1149,7 +1204,7 @@ function CategoryDonut({
         ))}
       </svg>
       {/* Center label */}
-      <div className="absolute inset-0 flex flex-col items-center justify-center">
+      <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
         <p className="text-xs text-slate-500 uppercase tracking-wider">Total</p>
         <p className="text-lg font-bold text-white">{formatCurrency(total)}</p>
       </div>

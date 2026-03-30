@@ -109,10 +109,13 @@ export default function ExportPage() {
       <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <SummaryCard
           title="Total Expenses"
-          value={formatCurrency(summary?.totals?.total_cad)}
+          value={formatCurrency(
+            summary?.totals?.total_net_expense_cad ?? summary?.totals?.total_cad,
+          )}
           icon={<DollarSign className="w-5 h-5" />}
           color="yel"
           loading={isLoading}
+          subtitle="Net of recoverable GST/HST (ITC)"
         />
         <SummaryCard
           title="Verified Receipts"
@@ -214,9 +217,12 @@ export default function ExportPage() {
 
       {/* Category Breakdown with Separate Tax Columns */}
       <div className="card p-4 md:p-6">
-        <h2 className="text-lg font-semibold text-white mb-4">
+        <h2 className="text-lg font-semibold text-white mb-1">
           Breakdown by Category
         </h2>
+        <p className="text-xs text-slate-500 mb-4">
+          Category totals are net of recoverable GST/HST (ITC); PST remains in the expense. Tax columns reflect recorded components.
+        </p>
         {isLoading ? (
           <div className="space-y-3">
             {[...Array(5)].map((_, i) => (
@@ -232,7 +238,7 @@ export default function ExportPage() {
                   <tr className="text-left text-sm text-slate-400 border-b border-slate-800">
                     <th className="pb-3 font-medium">Category</th>
                     <th className="pb-3 font-medium text-right">Count</th>
-                    <th className="pb-3 font-medium text-right">Total CAD</th>
+                    <th className="pb-3 font-medium text-right">Net CAD</th>
                     <th className="pb-3 font-medium text-right text-emerald-400">GST</th>
                     <th className="pb-3 font-medium text-right text-blue-400">HST</th>
                     <th className="pb-3 font-medium text-right text-orange-400">PST</th>
@@ -240,7 +246,12 @@ export default function ExportPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800">
-                  {Object.entries(summary.by_category).map(
+                  {Object.entries(summary.by_category)
+                    .sort(
+                      ([, a]: [string, any], [, b]: [string, any]) =>
+                        (b.total_net_cad ?? b.total_cad) - (a.total_net_cad ?? a.total_cad),
+                    )
+                    .map(
                     ([category, data]: [string, any]) => (
                       <tr key={category}>
                         <td className="py-3">
@@ -265,7 +276,7 @@ export default function ExportPage() {
                           {data.count}
                         </td>
                         <td className="py-3 text-right text-white font-medium">
-                          {formatCurrency(data.total_cad)}
+                          {formatCurrency(data.total_net_cad ?? data.total_cad)}
                         </td>
                         <td className="py-3 text-right text-emerald-400">
                           {formatCurrency(data.total_gst)}
@@ -280,8 +291,7 @@ export default function ExportPage() {
                           {formatCurrency(data.total_tax)}
                         </td>
                       </tr>
-                    )
-                  )}
+                    ))}
                 </tbody>
                 <tfoot>
                   <tr className="border-t-2 border-slate-700 font-semibold">
@@ -290,7 +300,9 @@ export default function ExportPage() {
                       {summary.totals.expense_count}
                     </td>
                     <td className="pt-4 text-right text-yel-500">
-                      {formatCurrency(summary.totals.total_cad)}
+                      {formatCurrency(
+                        summary.totals.total_net_expense_cad ?? summary.totals.total_cad,
+                      )}
                     </td>
                     <td className="pt-4 text-right text-emerald-500">
                       {formatCurrency(summary.totals.total_gst)}
@@ -312,7 +324,10 @@ export default function ExportPage() {
             {/* Mobile Category Cards */}
             <div className="md:hidden space-y-3">
               {Object.entries(summary.by_category)
-                .sort(([, a]: [string, any], [, b]: [string, any]) => b.total_cad - a.total_cad)
+                .sort(
+                  ([, a]: [string, any], [, b]: [string, any]) =>
+                    (b.total_net_cad ?? b.total_cad) - (a.total_net_cad ?? a.total_cad),
+                )
                 .map(([category, data]: [string, any]) => (
                   <div key={category} className="p-3 rounded-xl bg-slate-800/50">
                     <div className="flex items-center justify-between mb-2">
@@ -327,7 +342,7 @@ export default function ExportPage() {
                         <span className="text-xs text-slate-500">{data.count}×</span>
                       </div>
                       <span className="text-sm font-semibold text-white">
-                        {formatCurrency(data.total_cad)}
+                        {formatCurrency(data.total_net_cad ?? data.total_cad)}
                       </span>
                     </div>
                     <div className="flex items-center gap-3 text-xs">
@@ -341,7 +356,11 @@ export default function ExportPage() {
               <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20">
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-semibold text-amber-400">Total ({summary.totals.expense_count})</span>
-                  <span className="text-sm font-bold text-amber-400">{formatCurrency(summary.totals.total_cad)}</span>
+                  <span className="text-sm font-bold text-amber-400">
+                    {formatCurrency(
+                      summary.totals.total_net_expense_cad ?? summary.totals.total_cad,
+                    )}
+                  </span>
                 </div>
               </div>
             </div>

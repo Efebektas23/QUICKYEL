@@ -35,6 +35,13 @@ import {
   type AssetStatus as CCAAssetStatus,
   type UCCScheduleEntry,
 } from "./cca-engine";
+import {
+  computeBcItcAutoFieldsFromGross,
+  expenseHasManualOrParsedTax,
+  getEffectiveRecoverableItcCad,
+  getNetExpenseCad,
+  mergeBcItcForCategoryChange,
+} from "./bc-expense-tax";
 
 // Collection references
 const EXPENSES_COLLECTION = "expenses";
@@ -57,6 +64,8 @@ export interface Expense {
   gst_amount?: number;  // GST only (5%) - Federal tax, ITC recoverable
   hst_amount?: number;  // HST only (13-15%) - Harmonized tax, ITC recoverable
   pst_amount?: number;  // PST only (6-10%) - Provincial tax, NOT recoverable
+  /** True when gst_amount was system-estimated from BC category rules (bank import / no receipt). */
+  gst_itc_estimated?: boolean;
   exchange_rate: number;
   cad_amount: number | null;
   card_last_4: string | null;
@@ -124,7 +133,10 @@ export interface CategoryAuditTransaction {
   date: string | null;
   vendor: string | null;
   description: string;
+  /** Gross CAD (bank / receipt total). */
   amount_cad: number;
+  /** Net of recoverable ITC (BC rules). */
+  amount_net_cad: number;
   source_kind: ExpenseSourceKind;
   matching_status: ExpenseMatchingStatus;
   entry_type: string;
@@ -138,13 +150,17 @@ export interface CategoryAuditTransaction {
 export interface CategoryAuditResult {
   category: string;
   transactions: CategoryAuditTransaction[];
+  /** Sum of gross CAD (bank totals). */
   total_cad: number;
+  /** Sum of net expense (gross − ITC); reconciles to dashboard category totals. */
+  total_net_cad: number;
   count: number;
   reconciles_with_summary: boolean;
   summary_delta_cad: number;
   stats: {
     average_cad: number;
     largest: { id: string; amount_cad: number; vendor: string | null } | null;
+    /** Per month net CAD (aligned with dashboard). */
     monthly_trend: { month: string; label: string; total_cad: number; count: number }[];
   };
 }
@@ -424,7 +440,7 @@ export const expensesApi = {
     source_kind?: ExpenseSourceKind | "all";
     /** Case-insensitive match on vendor name or notes (truck / driver tags, etc.) */
     truck_driver_query?: string;
-    /** Category total_cad from summary layer — totals must align within tolerance */
+    /** Category total (net of recoverable ITC) from summary — reconciles to visible net total */
     expected_total_cad?: number;
   }): Promise<CategoryAuditResult> => {
     const { expenses: raw } = await expensesApi.list({ per_page: 5000 });
@@ -472,12 +488,14 @@ export const expensesApi = {
         (e.bank_description || "").trim() ||
         (e.vendor_name || "").trim() ||
         "—";
+      const gross = e.cad_amount || 0;
       return {
         id: e.id!,
         date: dateStr,
         vendor: e.vendor_name,
         description: desc,
-        amount_cad: e.cad_amount || 0,
+        amount_cad: gross,
+        amount_net_cad: getNetExpenseCad(e),
         source_kind: expenseSourceKind(e),
         matching_status: expenseMatchingStatus(e, duplicateIds),
         entry_type: resolvedEntryType(e),
@@ -498,13 +516,16 @@ export const expensesApi = {
     const total_cad = Math.round(
       transactions.reduce((s, t) => s + t.amount_cad, 0) * 100
     ) / 100;
+    const total_net_cad = Math.round(
+      transactions.reduce((s, t) => s + t.amount_net_cad, 0) * 100
+    ) / 100;
     const count = transactions.length;
 
     const exp = params.expected_total_cad;
     const summary_delta_cad =
-      exp !== undefined ? Math.round((total_cad - exp) * 100) / 100 : 0;
+      exp !== undefined ? Math.round((total_net_cad - exp) * 100) / 100 : 0;
     const reconciles_with_summary =
-      exp === undefined || Math.abs(total_cad - exp) < 0.02;
+      exp === undefined || Math.abs(total_net_cad - exp) < 0.02;
 
     let largest: CategoryAuditResult["stats"]["largest"] = null;
     for (const t of transactions) {
@@ -519,7 +540,7 @@ export const expensesApi = {
       if (!monthMap.has(key))
         monthMap.set(key, { total_cad: 0, count: 0 });
       const m = monthMap.get(key)!;
-      m.total_cad += t.amount_cad;
+      m.total_cad += t.amount_net_cad;
       m.count += 1;
     }
     const monthly_trend = Array.from(monthMap.entries())
@@ -532,12 +553,13 @@ export const expensesApi = {
       }));
 
     const average_cad =
-      count > 0 ? Math.round((total_cad / count) * 100) / 100 : 0;
+      count > 0 ? Math.round((total_net_cad / count) * 100) / 100 : 0;
 
     return {
       category: cat,
       transactions,
       total_cad,
+      total_net_cad,
       count,
       reconciles_with_summary,
       summary_delta_cad,
@@ -558,8 +580,19 @@ export const expensesApi = {
       const batch = writeBatch(db);
       for (const id of slice) {
         const ref = doc(db, EXPENSES_COLLECTION, id);
+        const snap = await getDoc(ref);
+        if (!snap.exists()) continue;
+        const data = snap.data();
+        const existing = {
+          id,
+          ...data,
+          transaction_date: data.transaction_date ? toDate(data.transaction_date) : null,
+          created_at: toDate(data.created_at),
+          updated_at: toDate(data.updated_at),
+        } as Expense;
+        const mergedPatch = mergeBcItcForCategoryChange(existing, category);
         batch.update(ref, {
-          category,
+          ...mergedPatch,
           updated_at: Timestamp.fromDate(now),
         });
       }
@@ -580,14 +613,50 @@ export const expensesApi = {
   },
 
   /**
-   * Verify expense
+   * Change category and refresh BC ITC estimate when the row is still system-estimated or has no manual tax.
+   */
+  updateCategoryWithItc: async (id: string, category: string): Promise<void> => {
+    const existing = await expensesApi.get(id);
+    if (!existing) throw new Error("Expense not found");
+    const patch = mergeBcItcForCategoryChange(existing, category);
+    await expensesApi.update(id, patch as Partial<Expense>);
+  },
+
+  /**
+   * Verify expense; applies BC ITC estimate when taxes are still blank (bank imports).
    */
   verify: async (id: string): Promise<void> => {
+    await ensureAuth();
     const docRef = doc(db, EXPENSES_COLLECTION, id);
-    await updateDoc(docRef, {
+    const exp = await expensesApi.get(id);
+    const now = Timestamp.fromDate(new Date());
+    const patch: Record<string, unknown> = {
       is_verified: true,
-      updated_at: Timestamp.fromDate(new Date()),
-    });
+      updated_at: now,
+    };
+    if (exp) {
+      if (exp.gst_itc_estimated === false) {
+        /* keep taxes — user or receipt is authoritative */
+      } else if (exp.gst_itc_estimated === true) {
+        const itc = computeBcItcAutoFieldsFromGross(
+          exp.category,
+          exp.cad_amount ?? 0,
+          exp.jurisdiction,
+          exp.original_currency || exp.currency,
+        );
+        if (itc) Object.assign(patch, itc);
+      } else if (!expenseHasManualOrParsedTax(exp)) {
+        const itc = computeBcItcAutoFieldsFromGross(
+          exp.category,
+          exp.cad_amount ?? 0,
+          exp.jurisdiction,
+          exp.original_currency || exp.currency,
+        );
+        if (itc) Object.assign(patch, itc);
+      }
+    }
+    // Firestore UpdateData is stricter than our dynamic patch shape
+    await updateDoc(docRef, patch as any);
   },
 
   /**
@@ -801,6 +870,7 @@ export const expensesApi = {
               gst_amount: result.gst_amount || 0,
               hst_amount: result.hst_amount || 0,
               pst_amount: result.pst_amount || 0,
+              gst_itc_estimated: false,
               // Update vendor/category if receipt has better info
               vendor_name: result.vendor_name || bestMatchData.vendor_name,
               category: result.category !== "uncategorized" ? result.category : bestMatchData.category,
@@ -1023,6 +1093,7 @@ export const expensesApi = {
         gst_amount: result.gst_amount || 0,
         hst_amount: result.hst_amount || 0,
         pst_amount: result.pst_amount || 0,
+        gst_itc_estimated: false,
         exchange_rate: result.exchange_rate || 1.0,
         cad_amount: result.cad_amount || result.total_amount,
         card_last_4: result.card_last_4,
@@ -1100,6 +1171,7 @@ export const expensesApi = {
       gst_amount: receiptExp.gst_amount || bankExp.gst_amount || 0,
       hst_amount: receiptExp.hst_amount || bankExp.hst_amount || 0,
       pst_amount: receiptExp.pst_amount || bankExp.pst_amount || 0,
+      gst_itc_estimated: false,
       // Keep better vendor/category info
       vendor_name: receiptExp.vendor_name || bankExp.vendor_name,
       category: (receiptExp.category && receiptExp.category !== "uncategorized")
@@ -1201,6 +1273,7 @@ export const expensesApi = {
         gst_amount: result.gst_amount || 0,
         hst_amount: result.hst_amount || 0,
         pst_amount: result.pst_amount || 0,
+        gst_itc_estimated: false,
         exchange_rate: result.exchange_rate || 1.0,
         cad_amount: result.cad_amount || result.total_amount,
         card_last_4: result.card_last_4,
@@ -2411,17 +2484,31 @@ export const bankImportApi = {
               }
             }
 
+            const jurisdiction = isUsd ? "usa" : "canada";
+            const itcAuto =
+              computeBcItcAutoFieldsFromGross(
+                tx.category || "uncategorized",
+                cadAmount,
+                jurisdiction,
+                currency,
+              ) || {
+                gst_amount: 0,
+                hst_amount: 0,
+                pst_amount: 0,
+                tax_amount: 0,
+                gst_itc_estimated: false,
+              };
             await addDoc(collection(db, EXPENSES_COLLECTION), {
               vendor_name: tx.vendor_name || tx.description1,
               transaction_date: tx.transaction_date,
               category: tx.category || "uncategorized",
-              jurisdiction: isUsd ? "usa" : "canada",
+              jurisdiction,
               original_amount: originalAmount,
               original_currency: currency,
-              tax_amount: 0,
-              gst_amount: 0,
+              gst_amount: itcAuto.gst_amount,
               hst_amount: 0,
               pst_amount: 0,
+              tax_amount: itcAuto.tax_amount,
               exchange_rate: exchangeRate,
               cad_amount: cadAmount,
               card_last_4: null,
@@ -2434,6 +2521,7 @@ export const bankImportApi = {
               notes: `[Bank Import] ${tx.notes || ""} | ${tx.description1} - ${tx.description2}`.trim(),
               entry_type: "bank_import",
               import_fingerprint: fp,
+              gst_itc_estimated: itcAuto.gst_itc_estimated,
               created_at: Timestamp.fromDate(now),
               updated_at: Timestamp.fromDate(now),
             });
@@ -2665,6 +2753,18 @@ export const factoringApi = {
         if (entry.type === "fee" || entry.category === "factoring_fees") {
           const amount = Math.abs(entry.amount);
           const cadAmount = currency === "CAD" ? amount : amount * exchangeRate;
+          const cadRounded = Math.round(cadAmount * 100) / 100;
+          const itcFact =
+            computeBcItcAutoFieldsFromGross(
+              "factoring_fees",
+              cadRounded,
+              "canada",
+              currency,
+            ) || {
+              gst_amount: 0,
+              tax_amount: 0,
+              gst_itc_estimated: false,
+            };
 
           await addDoc(collection(db, EXPENSES_COLLECTION), {
             vendor_name: "J D Factors",
@@ -2673,12 +2773,13 @@ export const factoringApi = {
             jurisdiction: "canada",
             original_amount: amount,
             original_currency: currency,
-            tax_amount: 0,
-            gst_amount: 0,
+            tax_amount: itcFact.tax_amount,
+            gst_amount: itcFact.gst_amount,
             hst_amount: 0,
             pst_amount: 0,
+            gst_itc_estimated: itcFact.gst_itc_estimated,
             exchange_rate: currency === "CAD" ? 1.0 : exchangeRate,
-            cad_amount: Math.round(cadAmount * 100) / 100,
+            cad_amount: cadRounded,
             card_last_4: null,
             payment_source: "bank_checking",
             receipt_image_url: null,
@@ -3195,7 +3296,10 @@ export const exportApi = {
 
 
     const totals = {
+      /** Gross CAD (bank / receipt totals) — unchanged for exports that need gross. */
       total_cad: 0,
+      /** Operating expenses net of recoverable GST/HST (ITC); PST remains in this total. */
+      total_net_expense_cad: 0,
       expense_count: expenses.expenses.length,
       total_tax_recoverable: 0,
       total_gst: 0,   // GST only (5%) - ITC recoverable
@@ -3206,13 +3310,22 @@ export const exportApi = {
       meals_50_percent: 0,  // 50% deductible portion of meals
       /** CCA depreciation for a full Jan 1 – Dec 31 calendar year (CRA); 0 for partial-year views */
       cca_deduction_cad: 0,
-      /** Operating expenses (total_cad) + cca_deduction_cad — use for net profit on full-year views */
+      /** Net operating expenses + CCA — use for net profit on full-year views */
       total_pnl_expense_cad: 0,
       /** Calendar year when CCA is included, or null */
       cca_fiscal_year: null as number | null,
     };
 
-    const by_category: Record<string, { total_cad: number; count: number; total_deductible: number; total_gst: number; total_hst: number; total_pst: number; total_tax: number }> = {};
+    const by_category: Record<string, {
+      total_cad: number;
+      total_net_cad: number;
+      count: number;
+      total_deductible: number;
+      total_gst: number;
+      total_hst: number;
+      total_pst: number;
+      total_tax: number;
+    }> = {};
     const by_payment_source: Record<string, number> = {
       company_expenses: 0,
       due_to_shareholder: 0,
@@ -3228,7 +3341,10 @@ export const exportApi = {
 
     expenses.expenses.forEach((expense) => {
       const cadAmount = expense.cad_amount || 0;
+      const netCad = getNetExpenseCad(expense);
+      const itcCad = getEffectiveRecoverableItcCad(expense);
       totals.total_cad += cadAmount;
+      totals.total_net_expense_cad += netCad;
 
       // Track by currency
       const currency = (expense.original_currency || expense.currency || "CAD").toUpperCase();
@@ -3260,8 +3376,7 @@ export const exportApi = {
       totals.total_pst += effectivePst;
       totals.total_tax += effectiveGst + effectiveHst + effectivePst;
 
-      // Only GST + HST are ITC recoverable (not PST)
-      totals.total_tax_recoverable += effectiveGst + effectiveHst;
+      totals.total_tax_recoverable += itcCad;
 
       // Calculate deductible amount for T2125
       const deductibleAmount = calculateDeductibleAmount(expense);
@@ -3270,9 +3385,19 @@ export const exportApi = {
       // By category
       const cat = expense.category || "uncategorized";
       if (!by_category[cat]) {
-        by_category[cat] = { total_cad: 0, count: 0, total_deductible: 0, total_gst: 0, total_hst: 0, total_pst: 0, total_tax: 0 };
+        by_category[cat] = {
+          total_cad: 0,
+          total_net_cad: 0,
+          count: 0,
+          total_deductible: 0,
+          total_gst: 0,
+          total_hst: 0,
+          total_pst: 0,
+          total_tax: 0,
+        };
       }
       by_category[cat].total_cad += cadAmount;
+      by_category[cat].total_net_cad += netCad;
       by_category[cat].count += 1;
       by_category[cat].total_deductible += deductibleAmount;
       by_category[cat].total_gst += effectiveGst;
@@ -3280,17 +3405,17 @@ export const exportApi = {
       by_category[cat].total_pst += effectivePst;
       by_category[cat].total_tax += effectiveGst + effectiveHst + effectivePst;
 
-      // By payment source
+      // By payment source (net of ITC, aligned with dashboard Total Expenses)
       if (expense.payment_source === "personal_card") {
-        by_payment_source.due_to_shareholder += cadAmount;
+        by_payment_source.due_to_shareholder += netCad;
       } else if (expense.payment_source === "company_card") {
-        by_payment_source.company_expenses += cadAmount;
+        by_payment_source.company_expenses += netCad;
       } else if (expense.payment_source === "bank_checking") {
-        by_payment_source.bank_checking += cadAmount;
+        by_payment_source.bank_checking += netCad;
       } else if (expense.payment_source === "e_transfer") {
-        by_payment_source.e_transfer += cadAmount;
+        by_payment_source.e_transfer += netCad;
       } else {
-        by_payment_source.unknown += cadAmount;
+        by_payment_source.unknown += netCad;
       }
     });
 
@@ -3315,8 +3440,10 @@ export const exportApi = {
     }
     totals.cca_deduction_cad = ccaDeduction;
     totals.cca_fiscal_year = ccaYear;
+    totals.total_net_expense_cad =
+      Math.round(totals.total_net_expense_cad * 100) / 100;
     totals.total_pnl_expense_cad =
-      Math.round((totals.total_cad + totals.cca_deduction_cad) * 100) / 100;
+      Math.round((totals.total_net_expense_cad + totals.cca_deduction_cad) * 100) / 100;
 
     return { totals, by_category, by_payment_source, by_currency };
   },

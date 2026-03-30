@@ -18,6 +18,7 @@ import {
   Search,
   ChevronDown,
   ChevronUp,
+  Wand2,
 } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { useQuery } from "@tanstack/react-query";
@@ -157,6 +158,10 @@ export function ReviewModal({
       const dateStr = data.transaction_date ? String(data.transaction_date).substring(0, 10) : null;
       const isoDate = dateStr ? `${dateStr}T12:00:00.000Z` : null;
 
+      const taxTotal =
+        (Number(data.gst_amount) || 0) +
+        (Number(data.hst_amount) || 0) +
+        (Number(data.pst_amount) || 0);
       await expensesApi.update(expense.id, {
         ...data,
         transaction_date: isoDate,
@@ -166,6 +171,8 @@ export function ReviewModal({
           : selectedCard
             ? (selectedCard.is_company_card ? "company_card" : "personal_card")
             : expense.payment_source || "unknown",
+        tax_amount: taxTotal,
+        gst_itc_estimated: false,
         is_verified: true,
       });
       onSave();
@@ -599,7 +606,18 @@ export function ReviewModal({
                       {/* GST */}
                       <div className="mb-3">
                         <label className="flex items-center gap-2 text-sm font-medium text-slate-300 mb-1">
-                          GST (5%) - Federal Tax
+                          GST (5%) — recoverable (ITC)
+                          {expense.gst_itc_estimated && (
+                            <span
+                              className="inline-flex items-center gap-1 text-amber-400"
+                              title="Estimated GST based on category tax rules."
+                            >
+                              <Wand2 className="w-3.5 h-3.5 shrink-0" aria-hidden />
+                              <span className="text-[10px] font-normal uppercase tracking-wide">
+                                Estimated
+                              </span>
+                            </span>
+                          )}
                         </label>
                         <input
                           type="number"

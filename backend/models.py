@@ -110,6 +110,8 @@ class Expense(Base):
     pst_amount = Column(Float, default=0.0)
     # Total Tax - Computed sum of GST + HST + PST for convenience
     tax_amount = Column(Float, default=0.0)
+    # True when gst_amount was system-estimated (BC category rules); cleared on manual/receipt tax entry
+    gst_itc_estimated = Column(Boolean, default=False)
     
     # Currency Conversion
     exchange_rate = Column(Float, default=1.0)

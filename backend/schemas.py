@@ -115,6 +115,7 @@ class ExpenseUpdate(BaseModel):
     gst_amount: Optional[float] = None  # GST only (5%)
     hst_amount: Optional[float] = None  # HST only (13-15%)
     pst_amount: Optional[float] = None  # PST only (6-10%)
+    gst_itc_estimated: Optional[bool] = None
     is_verified: bool = False
     notes: Optional[str] = None
 
@@ -133,6 +134,7 @@ class ExpenseResponse(BaseModel):
     hst_amount: float = 0.0  # HST only (13-15%)
     pst_amount: float = 0.0  # PST only (6-10%)
     tax_amount: float = 0.0  # Total tax (sum of GST + HST + PST)
+    gst_itc_estimated: bool = False
     exchange_rate: float
     cad_amount: Optional[float]
     card_last_4: Optional[str]

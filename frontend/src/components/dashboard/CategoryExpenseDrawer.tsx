@@ -210,7 +210,7 @@ export function CategoryExpenseDrawer({
 
     setSavingCategoryId(expenseId);
     try {
-      await expensesApi.update(expenseId, { category: newCategory });
+      await expensesApi.updateCategoryWithItc(expenseId, newCategory);
       toast.success("Category updated");
       await queryClient.invalidateQueries({ queryKey: ["summary"] });
       await queryClient.invalidateQueries({ queryKey: ["category-audit"] });
@@ -300,7 +300,7 @@ export function CategoryExpenseDrawer({
               </h2>
               {!selected && (
                 <p className="text-xs text-slate-500 mt-0.5">
-                  {expectedCount} in summary · {formatCurrency(expectedTotalCad)} — use the
+                  {expectedCount} in summary · {formatCurrency(expectedTotalCad)} net of ITC — use the
                   category column to reclassify; use checkboxes for bulk
                   {isFetching && !isLoading ? " · refreshing…" : ""}
                 </p>
@@ -389,7 +389,7 @@ export function CategoryExpenseDrawer({
                   <div className="flex items-start gap-2 p-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-200/90 text-xs">
                     <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
                     <span>
-                      Filtered total ({formatCurrency(data.total_cad)}) differs from dashboard
+                      Filtered net total ({formatCurrency(data.total_net_cad)}) differs from dashboard
                       category total by {formatCurrency(Math.abs(data.summary_delta_cad))}. Adjust
                       date filters or refresh — large imports may require a moment to sync.
                     </span>
@@ -461,7 +461,7 @@ export function CategoryExpenseDrawer({
                   </p>
                 ) : (
                   <div className="overflow-x-auto -mx-1">
-                  <table className="w-full text-sm min-w-[520px]">
+                  <table className="w-full text-sm min-w-[600px]">
                     <thead className="sticky top-0 bg-slate-900/95 backdrop-blur z-10 border-b border-slate-800">
                       <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500">
                         <th className="pl-3 py-2 w-10">
@@ -480,7 +480,8 @@ export function CategoryExpenseDrawer({
                         <th className="py-2 pl-1 pr-2">Date</th>
                         <th className="py-2 pr-2 min-w-[120px]">Vendor / description</th>
                         <th className="py-2 pr-2 w-[140px]">Category</th>
-                        <th className="py-2 pr-2 text-right">Amount</th>
+                        <th className="py-2 pr-2 text-right">Gross</th>
+                        <th className="py-2 pr-2 text-right">Net</th>
                         <th className="py-2 pr-3">Status</th>
                       </tr>
                     </thead>
@@ -540,8 +541,11 @@ export function CategoryExpenseDrawer({
                               <Loader2 className="w-3.5 h-3.5 animate-spin text-yel-500 mt-1" />
                             )}
                           </td>
-                          <td className="py-2 pr-2 text-right font-medium text-white align-top whitespace-nowrap">
+                          <td className="py-2 pr-2 text-right font-medium text-slate-300 align-top whitespace-nowrap text-xs">
                             {formatCurrency(row.amount_cad)}
+                          </td>
+                          <td className="py-2 pr-2 text-right font-medium text-white align-top whitespace-nowrap">
+                            {formatCurrency(row.amount_net_cad)}
                           </td>
                           <td className="py-2 pr-3 align-top">{statusBadge(row.matching_status)}</td>
                         </tr>
@@ -554,10 +558,13 @@ export function CategoryExpenseDrawer({
                           colSpan={3}
                           className="py-2 pl-1 text-slate-400 text-xs font-medium"
                         >
-                          Visible total
+                          Visible totals
+                        </td>
+                        <td className="py-2 pr-2 text-right text-slate-400 font-medium whitespace-nowrap text-xs">
+                          {formatCurrency(data.total_cad)}
                         </td>
                         <td className="py-2 pr-2 text-right text-white font-semibold whitespace-nowrap">
-                          {formatCurrency(data.total_cad)}
+                          {formatCurrency(data.total_net_cad)}
                         </td>
                         <td className="py-2 pr-3 w-24" />
                       </tr>
