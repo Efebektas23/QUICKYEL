@@ -117,7 +117,7 @@ TRANSACTION CLASSIFICATION RULES:
    - "loan_interest": Loan payments, "PURCHASE INTEREST", "INTEREST CHARGE-PURCHASE" (credit card interest)
    - "maintenance_repairs": Vehicle repairs, parts
    - "licenses_dues": Government permits, licenses; **US**: UNIFIED CARRIER REGISTRATION (UCR), state permit portals
-   - "tolls_scales": Tolls, bridge fees, scale fees; **US**: DTOPS, PREPASS, EZPASS, CBP border fees, CAT SCALE, ODOT tolls
+   - "tolls_scales": Tolls, bridge fees, scale fees; **US**: DTOPS, PREPASS, EZPASS / E-ZPass (incl. Bank of America debits), CBP border fees, CAT SCALE, ODOT tolls
    - "meals_entertainment": Restaurants, food, DENNY'S, TIM HORTONS
    - "travel_lodging": Hotels, motels
    - "uncategorized": Cannot determine category
@@ -458,6 +458,19 @@ CATEGORIZE ALL {len(transactions)} TRANSACTIONS AND RETURN JSON ARRAY:"""
                         prev,
                     )
                     override_count += 1
+
+            # E-ZPass debits from Bank of America (USD chequing — not RBC)
+            if (
+                tx.get("type") == "expense"
+                and ("ezpass" in desc1 or "e-zpass" in desc1)
+                and "bank of america" in desc2
+                and tx.get("category") != "tolls_scales"
+            ):
+                tx["category"] = "tolls_scales"
+                tx["vendor_name"] = "E-ZPass (Bank of America)"
+                tx["notes"] = "US E-ZPass replenishment (Bank of America checking)"
+                logger.info("Override: E-ZPass + BoA -> tolls_scales")
+                override_count += 1
         
         if override_count > 0:
             logger.warning(f"Post-AI validation: overrode {override_count} AI classifications")
@@ -635,10 +648,27 @@ CATEGORIZE ALL {len(transactions)} TRANSACTIONS AND RETURN JSON ARRAY:"""
                     tx["category"] = "office_admin"
                     tx["vendor_name"] = "RBC Card"
                     tx["notes"] = "Credit card fee"
-                elif any(kw in desc1 for kw in ["dtops", "prepass", "ezpass", "cat scale"]):
+                elif any(
+                    kw in desc1 or kw in desc2
+                    for kw in ["dtops", "prepass", "ezpass", "e-zpass", "e zpass", "cat scale"]
+                ):
                     tx["category"] = "tolls_scales"
-                    tx["vendor_name"] = tx["description1"][:72]
-                    tx["notes"] = "Toll / scale / weigh (US)"
+                    if any(x in desc1 for x in ["ezpass", "e-zpass", "e zpass"]):
+                        tx["vendor_name"] = (
+                            "E-ZPass (Bank of America)"
+                            if "bank of america" in desc2
+                            else "E-ZPass"
+                        )
+                    else:
+                        tx["vendor_name"] = tx["description1"][:72]
+                    if "bank of america" in desc2 and "ezpass" in desc1:
+                        tx["notes"] = "US E-ZPass replenishment (Bank of America checking)"
+                    else:
+                        tx["notes"] = "Toll / scale / weigh (US)"
+                elif "bank of america" in desc2 and ("toll" in desc1 or "ezpass" in desc1 or "e-zpass" in desc1):
+                    tx["category"] = "tolls_scales"
+                    tx["vendor_name"] = "E-ZPass (Bank of America)"
+                    tx["notes"] = "US toll replenishment paid from BoA checking"
                 elif desc1.startswith("cbp ") or " cbp " in desc1:
                     tx["category"] = "tolls_scales"
                     tx["vendor_name"] = tx["description1"][:72]
