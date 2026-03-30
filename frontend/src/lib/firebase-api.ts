@@ -42,6 +42,7 @@ import {
   getItcSourceLabel,
   getNetExpenseCad,
   mergeBcItcForCategoryChange,
+  shouldBypassCanadianItcEstimation,
 } from "./bc-expense-tax";
 
 // Collection references
@@ -646,13 +647,22 @@ export const expensesApi = {
       if (exp.gst_itc_estimated === false) {
         /* keep taxes — user or receipt is authoritative */
       } else if (exp.gst_itc_estimated === true) {
-        const itc = computeBcItcAutoFieldsFromGross(
-          exp.category,
-          exp.cad_amount ?? 0,
-          exp.jurisdiction,
-          exp.original_currency || exp.currency,
-        );
-        if (itc) Object.assign(patch, itc);
+        if (shouldBypassCanadianItcEstimation(exp.original_currency || exp.currency, exp.jurisdiction)) {
+          Object.assign(patch, {
+            gst_amount: 0,
+            hst_amount: 0,
+            tax_amount: 0,
+            gst_itc_estimated: false,
+          });
+        } else {
+          const itc = computeBcItcAutoFieldsFromGross(
+            exp.category,
+            exp.cad_amount ?? 0,
+            exp.jurisdiction,
+            exp.original_currency || exp.currency,
+          );
+          if (itc) Object.assign(patch, itc);
+        }
       } else if (!expenseHasManualOrParsedTax(exp)) {
         const itc = computeBcItcAutoFieldsFromGross(
           exp.category,
@@ -665,6 +675,54 @@ export const expensesApi = {
     }
     // Firestore UpdateData is stricter than our dynamic patch shape
     await updateDoc(docRef, patch as any);
+  },
+
+  /**
+   * Fix historical USD / USA expenses that incorrectly stored category-based Canadian ITC.
+   * Zeros GST/HST/tax_amount and clears gst_itc_estimated. Idempotent.
+   */
+  sanitizeUsdAutoEstimatedItc: async (): Promise<{ updated: number }> => {
+    await ensureAuth();
+    const q = query(
+      collection(db, EXPENSES_COLLECTION),
+      orderBy("created_at", "desc"),
+      limit(5000),
+    );
+    const snapshot = await getDocs(q);
+    let updated = 0;
+    let batch = writeBatch(db);
+    let batchOps = 0;
+
+    const commitBatch = async () => {
+      if (batchOps === 0) return;
+      await batch.commit();
+      batch = writeBatch(db);
+      batchOps = 0;
+    };
+
+    const now = Timestamp.fromDate(new Date());
+    for (const docSnap of snapshot.docs) {
+      const data = docSnap.data();
+      const cur = (data.original_currency || data.currency || "CAD").toUpperCase();
+      const jur = String(data.jurisdiction || "").toLowerCase();
+      const isUsdOrUsa = cur === "USD" || jur === "usa" || jur === "us";
+      if (!isUsdOrUsa || data.gst_itc_estimated !== true) continue;
+
+      batch.update(docSnap.ref, {
+        gst_amount: 0,
+        hst_amount: 0,
+        tax_amount: 0,
+        gst_itc_estimated: false,
+        updated_at: now,
+      });
+      batchOps += 1;
+      updated += 1;
+      if (batchOps >= 400) {
+        await commitBatch();
+      }
+    }
+    await commitBatch();
+    return { updated };
   },
 
   /**

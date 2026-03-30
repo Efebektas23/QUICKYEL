@@ -98,8 +98,23 @@ export function isCanadaJurisdiction(j: string | undefined): boolean {
 }
 
 /**
+ * True when Canadian GST/HST/PST must never be inferred (US spend / USD native).
+ * CAD amount may exist from FX — ITC still zero for CRA.
+ */
+export function shouldBypassCanadianItcEstimation(
+  originalCurrency: string | undefined,
+  jurisdiction: string | undefined,
+): boolean {
+  const cur = (originalCurrency || "CAD").toUpperCase();
+  const jur = (jurisdiction || "").toLowerCase();
+  if (cur === "USD") return true;
+  if (jur === "usa" || jur === "us") return true;
+  return false;
+}
+
+/**
  * Persisted ITC estimate for CAD operating expenses (BC rules).
- * Returns null for USD or non-Canada jurisdiction.
+ * Returns null for USD, USA jurisdiction, or non-Canada jurisdiction.
  */
 export function computeBcItcAutoFieldsFromGross(
   category: string | undefined,
@@ -108,7 +123,7 @@ export function computeBcItcAutoFieldsFromGross(
   originalCurrency: string | undefined,
 ): { gst_amount: number; tax_amount: number; gst_itc_estimated: boolean } | null {
   if (grossCad <= 0) return null;
-  if ((originalCurrency || "CAD").toUpperCase() === "USD") return null;
+  if (shouldBypassCanadianItcEstimation(originalCurrency, jurisdiction)) return null;
   if (!isCanadaJurisdiction(jurisdiction)) return null;
   const cat = category || "uncategorized";
   const gst = estimateBcRecoverableItcCad(cat, grossCad);
@@ -129,6 +144,18 @@ export function mergeBcItcForCategoryChange(
   newCategory: string,
 ): Record<string, unknown> {
   const out: Record<string, unknown> = { category: newCategory };
+  const cur = existing.original_currency || existing.currency;
+  if (shouldBypassCanadianItcEstimation(cur, existing.jurisdiction)) {
+    if (existing.gst_itc_estimated === true) {
+      Object.assign(out, {
+        gst_amount: 0,
+        hst_amount: 0,
+        tax_amount: 0,
+        gst_itc_estimated: false,
+      });
+    }
+    return out;
+  }
   if (existing.gst_itc_estimated === false) {
     return out;
   }
@@ -137,7 +164,7 @@ export function mergeBcItcForCategoryChange(
       newCategory,
       existing.cad_amount ?? 0,
       existing.jurisdiction,
-      existing.original_currency || existing.currency,
+      cur,
     );
     if (itc) Object.assign(out, itc);
     return out;
@@ -149,7 +176,7 @@ export function mergeBcItcForCategoryChange(
     newCategory,
     existing.cad_amount ?? 0,
     existing.jurisdiction,
-    existing.original_currency || existing.currency,
+    cur,
   );
   if (itc) Object.assign(out, itc);
   return out;
@@ -171,6 +198,9 @@ export function getEffectiveGstHstForItc(
 /** Total recoverable ITC (GST + HST) using stored values or BC category estimate when allowed. */
 export function getEffectiveRecoverableItcCad(e: ExpenseItcMeta): number {
   if (e.gst_itc_estimated === true) {
+    if (shouldBypassCanadianItcEstimation(e.original_currency || e.currency, e.jurisdiction)) {
+      return 0;
+    }
     const gst = e.gst_amount ?? 0;
     const hst = e.hst_amount ?? 0;
     return roundMoney(gst + hst);
@@ -184,8 +214,10 @@ export function getEffectiveRecoverableItcCad(e: ExpenseItcMeta): number {
     return roundMoney(gst + hst);
   }
   const gross = e.cad_amount ?? 0;
-  const cur = (e.original_currency || e.currency || "CAD").toUpperCase();
-  if (cur === "USD" || !isCanadaJurisdiction(e.jurisdiction) || gross <= 0) {
+  if (shouldBypassCanadianItcEstimation(e.original_currency || e.currency, e.jurisdiction)) {
+    return 0;
+  }
+  if (!isCanadaJurisdiction(e.jurisdiction) || gross <= 0) {
     return 0;
   }
   return estimateBcRecoverableItcCad(e.category || "uncategorized", gross);
@@ -200,11 +232,18 @@ export function getNetExpenseCad(e: ExpenseItcMeta): number {
 
 /** Export / audit: whether ITC came from category auto-estimate vs receipt or manual entry. */
 export function getItcSourceLabel(e: ExpenseItcMeta): "Auto-Estimated" | "Manual / Receipt" {
-  if (e.gst_itc_estimated === true) return "Auto-Estimated";
+  if (e.gst_itc_estimated === true) {
+    if (shouldBypassCanadianItcEstimation(e.original_currency || e.currency, e.jurisdiction)) {
+      return "Manual / Receipt";
+    }
+    return "Auto-Estimated";
+  }
   if (e.gst_itc_estimated === false) return "Manual / Receipt";
   if (expenseHasManualOrParsedTax(e)) return "Manual / Receipt";
-  const cur = (e.original_currency || e.currency || "CAD").toUpperCase();
-  if (cur === "USD" || !isCanadaJurisdiction(e.jurisdiction)) return "Manual / Receipt";
+  if (shouldBypassCanadianItcEstimation(e.original_currency || e.currency, e.jurisdiction)) {
+    return "Manual / Receipt";
+  }
+  if (!isCanadaJurisdiction(e.jurisdiction)) return "Manual / Receipt";
   const gross = e.cad_amount ?? 0;
   if (gross <= EPS) return "Manual / Receipt";
   return "Auto-Estimated";

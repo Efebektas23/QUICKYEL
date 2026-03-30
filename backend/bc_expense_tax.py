@@ -43,6 +43,16 @@ def estimate_bc_recoverable_itc_cad(category: str, gross_cad: float) -> float:
     return 0.0
 
 
+def should_bypass_canadian_itc_estimation(e: Expense) -> bool:
+    """USD-native or USA jurisdiction: never infer Canadian GST/HST ITC."""
+    cur = (e.original_currency or "CAD").upper()
+    if cur == "USD":
+        return True
+    if e.jurisdiction == Jurisdiction.USA:
+        return True
+    return False
+
+
 def expense_has_manual_or_parsed_tax(e: Expense) -> bool:
     gst = e.gst_amount or 0
     hst = e.hst_amount or 0
@@ -63,6 +73,8 @@ def get_effective_gst_hst_for_itc(e: Expense) -> tuple[float, float]:
 def effective_recoverable_itc_cad(e: Expense) -> float:
     flag = getattr(e, "gst_itc_estimated", None)
     if flag is True:
+        if should_bypass_canadian_itc_estimation(e):
+            return 0.0
         return _round_money((e.gst_amount or 0) + (e.hst_amount or 0))
     if flag is False:
         g, h = get_effective_gst_hst_for_itc(e)
@@ -71,8 +83,7 @@ def effective_recoverable_itc_cad(e: Expense) -> float:
         g, h = get_effective_gst_hst_for_itc(e)
         return _round_money(g + h)
     gross = e.cad_amount or 0
-    cur = (e.original_currency or "CAD").upper()
-    if cur == "USD" or e.jurisdiction != Jurisdiction.CANADA or gross <= 0:
+    if should_bypass_canadian_itc_estimation(e) or e.jurisdiction != Jurisdiction.CANADA or gross <= 0:
         return 0.0
     cat = e.category.value if e.category else "uncategorized"
     return estimate_bc_recoverable_itc_cad(cat, gross)
@@ -87,13 +98,16 @@ def net_expense_cad(e: Expense) -> float:
 def itc_source_label(e: Expense) -> str:
     flag = getattr(e, "gst_itc_estimated", None)
     if flag is True:
+        if should_bypass_canadian_itc_estimation(e):
+            return "Manual / Receipt"
         return "Auto-Estimated"
     if flag is False:
         return "Manual / Receipt"
     if expense_has_manual_or_parsed_tax(e):
         return "Manual / Receipt"
-    cur = (e.original_currency or "CAD").upper()
-    if cur == "USD" or e.jurisdiction != Jurisdiction.CANADA:
+    if should_bypass_canadian_itc_estimation(e):
+        return "Manual / Receipt"
+    if e.jurisdiction != Jurisdiction.CANADA:
         return "Manual / Receipt"
     if (e.cad_amount or 0) <= EPS:
         return "Manual / Receipt"
