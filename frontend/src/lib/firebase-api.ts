@@ -13,6 +13,7 @@ import {
   limit,
   where,
   Timestamp,
+  writeBatch,
 } from "firebase/firestore";
 import {
   ref,
@@ -56,7 +57,7 @@ export interface Expense {
   processing_status: string;
   error_message: string | null;
   notes: string | null;
-  entry_type?: "ocr" | "manual" | "bank_import";  // Track how the expense was entered
+  entry_type?: "ocr" | "manual" | "bank_import" | "factoring_import";
   proof_image_url?: string | null;  // Bank screenshot or other proof for manual entries
   // Bank import linking
   bank_linked?: boolean;
@@ -71,6 +72,117 @@ export interface Expense {
   receipt_linked_date?: Date;
   created_at: Date;
   updated_at: Date;
+}
+
+/** High-level data source for audit filters (maps to entry_type). */
+export type ExpenseSourceKind = "bank" | "receipt" | "manual";
+
+export type ExpenseMatchingStatus = "matched" | "unmatched" | "potential_duplicate";
+
+export interface CategoryAuditTransaction {
+  id: string;
+  date: string | null;
+  vendor: string | null;
+  description: string;
+  amount_cad: number;
+  source_kind: ExpenseSourceKind;
+  matching_status: ExpenseMatchingStatus;
+  entry_type: string;
+  expense: Expense;
+  receipt_url: string | null;
+  bank_description: string | null;
+  bank_statement_date: string | null;
+  import_fingerprint: string | null;
+}
+
+export interface CategoryAuditResult {
+  category: string;
+  transactions: CategoryAuditTransaction[];
+  total_cad: number;
+  count: number;
+  reconciles_with_summary: boolean;
+  summary_delta_cad: number;
+  stats: {
+    average_cad: number;
+    largest: { id: string; amount_cad: number; vendor: string | null } | null;
+    monthly_trend: { month: string; label: string; total_cad: number; count: number }[];
+  };
+}
+
+function resolvedEntryType(e: Expense): string {
+  if (e.entry_type) return e.entry_type;
+  if (e.notes?.includes("[Bank Import]")) return "bank_import";
+  return "manual";
+}
+
+export function expenseSourceKind(e: Expense): ExpenseSourceKind {
+  const et = resolvedEntryType(e);
+  if (et === "bank_import" || et === "factoring_import") return "bank";
+  if (et === "ocr") return "receipt";
+  return "manual";
+}
+
+function hasReceiptAttachment(e: Expense): boolean {
+  return !!(
+    e.receipt_image_url ||
+    (e.receipt_image_urls && e.receipt_image_urls.length > 0)
+  );
+}
+
+export function expenseMatchingStatus(
+  e: Expense,
+  duplicateIds: Set<string>
+): ExpenseMatchingStatus {
+  if (e.id && duplicateIds.has(e.id)) return "potential_duplicate";
+  const hasReceipt = hasReceiptAttachment(e);
+  const et = resolvedEntryType(e);
+  if (e.bank_linked && hasReceipt) return "matched";
+  if ((et === "bank_import" || et === "factoring_import") && (hasReceipt || e.receipt_linked))
+    return "matched";
+  if (et === "ocr" && e.bank_linked) return "matched";
+  return "unmatched";
+}
+
+function expenseDateKeyForDedup(exp: Expense): string {
+  if (!exp.transaction_date) return "unknown";
+  const t: unknown = exp.transaction_date;
+  if (t instanceof Date) {
+    const y = t.getFullYear();
+    const m = String(t.getMonth() + 1).padStart(2, "0");
+    const day = String(t.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  }
+  if (typeof t === "string" && /^\d{4}-\d{2}-\d{2}/.test(t)) return t.slice(0, 10);
+  try {
+    const d = new Date(t as string);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  } catch {
+    return "unknown";
+  }
+}
+
+function findPotentialDuplicateIds(expenses: Expense[]): Set<string> {
+  const map = new Map<string, string[]>();
+  for (const e of expenses) {
+    if (!e.id) continue;
+    const amt = Math.round((e.cad_amount || 0) * 100);
+    const d = expenseDateKeyForDedup(e);
+    const v = (e.vendor_name || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, "")
+      .slice(0, 14);
+    const key = `${amt}|${d}|${v}`;
+    if (!map.has(key)) map.set(key, []);
+    map.get(key)!.push(e.id);
+  }
+  const dups = new Set<string>();
+  for (const ids of Array.from(map.values())) {
+    if (ids.length > 1)
+      ids.forEach((id: string) => {
+        dups.add(id);
+      });
+  }
+  return dups;
 }
 
 export interface Card {
@@ -258,6 +370,160 @@ export const expensesApi = {
     });
 
     return { expenses, total: expenses.length };
+  },
+
+  /**
+   * Verified expenses for a category with audit fields (matches dashboard summary logic).
+   * Uses the same verified + date window as exportApi.getSummary for reconciliation.
+   */
+  listByCategoryAudit: async (params: {
+    category: string;
+    start_date?: string | null;
+    end_date?: string | null;
+    /** Filter: bank | receipt | manual (entry_type–derived) */
+    source_kind?: ExpenseSourceKind | "all";
+    /** Case-insensitive match on vendor name or notes (truck / driver tags, etc.) */
+    truck_driver_query?: string;
+    /** Category total_cad from summary layer — totals must align within tolerance */
+    expected_total_cad?: number;
+  }): Promise<CategoryAuditResult> => {
+    const { expenses: raw } = await expensesApi.list({ per_page: 5000 });
+    let list = raw.filter((e) => e.is_verified);
+
+    if (params.start_date) {
+      const start = new Date(params.start_date);
+      list = list.filter(
+        (e) => e.transaction_date && new Date(e.transaction_date) >= start
+      );
+    }
+    if (params.end_date) {
+      const end = new Date(params.end_date);
+      end.setHours(23, 59, 59, 999);
+      list = list.filter(
+        (e) => e.transaction_date && new Date(e.transaction_date) <= end
+      );
+    }
+
+    const cat = params.category;
+    list = list.filter((e) => (e.category || "uncategorized") === cat);
+
+    const q = (params.truck_driver_query || "").trim().toLowerCase();
+    if (q) {
+      list = list.filter((e) => {
+        const hay = `${e.vendor_name || ""} ${e.notes || ""}`.toLowerCase();
+        return hay.includes(q);
+      });
+    }
+
+    const sk = params.source_kind;
+    if (sk && sk !== "all") {
+      list = list.filter((e) => expenseSourceKind(e) === sk);
+    }
+
+    const duplicateIds = findPotentialDuplicateIds(list);
+
+    const transactions: CategoryAuditTransaction[] = list.map((e) => {
+      const dateStr = e.transaction_date
+        ? toISODateString(e.transaction_date)
+        : null;
+      const desc =
+        (e.notes || "").trim() ||
+        (e.bank_description || "").trim() ||
+        (e.vendor_name || "").trim() ||
+        "—";
+      return {
+        id: e.id!,
+        date: dateStr,
+        vendor: e.vendor_name,
+        description: desc,
+        amount_cad: e.cad_amount || 0,
+        source_kind: expenseSourceKind(e),
+        matching_status: expenseMatchingStatus(e, duplicateIds),
+        entry_type: resolvedEntryType(e),
+        expense: e,
+        receipt_url: e.receipt_image_url,
+        bank_description: e.bank_description ?? null,
+        bank_statement_date: e.bank_statement_date ?? null,
+        import_fingerprint: e.import_fingerprint ?? null,
+      };
+    });
+
+    transactions.sort((a, b) => {
+      const ta = a.date || "";
+      const tb = b.date || "";
+      return tb.localeCompare(ta);
+    });
+
+    const total_cad = Math.round(
+      transactions.reduce((s, t) => s + t.amount_cad, 0) * 100
+    ) / 100;
+    const count = transactions.length;
+
+    const exp = params.expected_total_cad;
+    const summary_delta_cad =
+      exp !== undefined ? Math.round((total_cad - exp) * 100) / 100 : 0;
+    const reconciles_with_summary =
+      exp === undefined || Math.abs(total_cad - exp) < 0.02;
+
+    let largest: CategoryAuditResult["stats"]["largest"] = null;
+    for (const t of transactions) {
+      if (!largest || t.amount_cad > largest.amount_cad) {
+        largest = { id: t.id, amount_cad: t.amount_cad, vendor: t.vendor };
+      }
+    }
+
+    const monthMap = new Map<string, { total_cad: number; count: number }>();
+    for (const t of transactions) {
+      const key = t.date ? t.date.slice(0, 7) : "unknown";
+      if (!monthMap.has(key))
+        monthMap.set(key, { total_cad: 0, count: 0 });
+      const m = monthMap.get(key)!;
+      m.total_cad += t.amount_cad;
+      m.count += 1;
+    }
+    const monthly_trend = Array.from(monthMap.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([month, v]) => ({
+        month,
+        label: month === "unknown" ? "No date" : month,
+        total_cad: Math.round(v.total_cad * 100) / 100,
+        count: v.count,
+      }));
+
+    const average_cad =
+      count > 0 ? Math.round((total_cad / count) * 100) / 100 : 0;
+
+    return {
+      category: cat,
+      transactions,
+      total_cad,
+      count,
+      reconciles_with_summary,
+      summary_delta_cad,
+      stats: { average_cad, largest, monthly_trend },
+    };
+  },
+
+  bulkUpdateCategory: async (
+    ids: string[],
+    category: string
+  ): Promise<void> => {
+    if (ids.length === 0) return;
+    await ensureAuth();
+    const now = new Date();
+    const CHUNK = 400;
+    for (let i = 0; i < ids.length; i += CHUNK) {
+      const slice = ids.slice(i, i + CHUNK);
+      const batch = writeBatch(db);
+      for (const id of slice) {
+        const ref = doc(db, EXPENSES_COLLECTION, id);
+        batch.update(ref, {
+          category,
+          updated_at: Timestamp.fromDate(now),
+        });
+      }
+      await batch.commit();
+    }
   },
 
   /**

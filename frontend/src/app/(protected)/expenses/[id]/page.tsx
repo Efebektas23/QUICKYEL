@@ -18,11 +18,18 @@ import {
   RefreshCw,
   ExternalLink,
   Loader2,
+  Landmark,
+  Link2,
+  FileText,
 } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import toast from "react-hot-toast";
-import { expensesApi } from "@/lib/firebase-api";
+import {
+  expensesApi,
+  expenseMatchingStatus,
+  expenseSourceKind,
+} from "@/lib/firebase-api";
 import { formatCurrency, formatDate, cn } from "@/lib/utils";
 import { categoryLabels, categoryColors } from "@/lib/store";
 import { ReviewModal } from "@/components/expenses/ReviewModal";
@@ -72,6 +79,11 @@ export default function ExpenseDetailPage() {
   }
 
   const color = categoryColors[expense.category] || "#6B7280";
+  const matchingStatus = expenseMatchingStatus(expense, new Set());
+  const sourceKind = expenseSourceKind(expense);
+  const isPdfReceipt =
+    (expense.receipt_image_url || "").toLowerCase().includes(".pdf") ||
+    (expense.receipt_image_url || "").toLowerCase().includes("pdf");
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
@@ -131,21 +143,36 @@ export default function ExpenseDetailPage() {
         >
           <h2 className="text-lg font-semibold text-white mb-4">Receipt</h2>
           {expense.receipt_image_url ? (
-            <div className="relative aspect-[3/4] rounded-xl overflow-hidden bg-slate-800">
-              <img
-                src={expense.receipt_image_url}
-                alt="Receipt"
-                className="w-full h-full object-contain"
-              />
-              <a
-                href={expense.receipt_image_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="absolute bottom-4 right-4 p-2 bg-slate-900/80 backdrop-blur rounded-lg text-white hover:bg-slate-800 transition-colors"
-              >
-                <ExternalLink className="w-5 h-5" />
-              </a>
-            </div>
+            isPdfReceipt ? (
+              <div className="rounded-xl bg-slate-800 p-6 flex flex-col items-center justify-center gap-3 min-h-[200px]">
+                <FileText className="w-12 h-12 text-slate-500" />
+                <a
+                  href={expense.receipt_image_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-yel-500 hover:text-yel-400 inline-flex items-center gap-2"
+                >
+                  <ExternalLink className="w-4 h-4" />
+                  Open receipt document (PDF)
+                </a>
+              </div>
+            ) : (
+              <div className="relative aspect-[3/4] rounded-xl overflow-hidden bg-slate-800">
+                <img
+                  src={expense.receipt_image_url}
+                  alt="Receipt"
+                  className="w-full h-full object-contain"
+                />
+                <a
+                  href={expense.receipt_image_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="absolute bottom-4 right-4 p-2 bg-slate-900/80 backdrop-blur rounded-lg text-white hover:bg-slate-800 transition-colors"
+                >
+                  <ExternalLink className="w-5 h-5" />
+                </a>
+              </div>
+            )
           ) : (
             <div className="aspect-[3/4] rounded-xl bg-slate-800 flex items-center justify-center text-slate-500">
               No image available
@@ -280,6 +307,93 @@ export default function ExpenseDetailPage() {
           </motion.div>
         </div>
       </div>
+
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="card p-6 border-l-4"
+        style={{ borderLeftColor: color }}
+      >
+        <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+          <Link2 className="w-5 h-5 text-slate-400" />
+          Audit trail
+        </h2>
+        <div className="grid md:grid-cols-2 gap-6">
+          <div className="space-y-3">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500 flex items-center gap-2">
+              <Landmark className="w-4 h-4" />
+              Bank &amp; source
+            </h3>
+            <dl className="text-sm space-y-2">
+              <div className="flex justify-between gap-2">
+                <dt className="text-slate-500">Data source</dt>
+                <dd className="text-white capitalize">{sourceKind}</dd>
+              </div>
+              <div className="flex justify-between gap-2">
+                <dt className="text-slate-500">Entry type</dt>
+                <dd className="text-white">{expense.entry_type || "—"}</dd>
+              </div>
+              <div className="flex justify-between gap-2">
+                <dt className="text-slate-500">Matching (receipt ↔ bank)</dt>
+                <dd className="text-white capitalize">
+                  {matchingStatus.replace(/_/g, " ")}
+                </dd>
+              </div>
+              {expense.bank_statement_date && (
+                <div className="flex justify-between gap-2">
+                  <dt className="text-slate-500">Bank statement date</dt>
+                  <dd className="text-white">{expense.bank_statement_date}</dd>
+                </div>
+              )}
+              {expense.bank_description && (
+                <div>
+                  <dt className="text-slate-500 text-xs mb-1">Bank description</dt>
+                  <dd className="text-slate-200 break-words">{expense.bank_description}</dd>
+                </div>
+              )}
+              {expense.bank_match_reason != null && expense.bank_match_reason !== "" && (
+                <div>
+                  <dt className="text-slate-500 text-xs mb-1">Match reason</dt>
+                  <dd className="text-slate-200">{String(expense.bank_match_reason)}</dd>
+                </div>
+              )}
+              {expense.bank_match_score != null && (
+                <div className="flex justify-between gap-2">
+                  <dt className="text-slate-500">Match score</dt>
+                  <dd className="text-white">{expense.bank_match_score}</dd>
+                </div>
+              )}
+              {expense.import_fingerprint && (
+                <div className="flex justify-between gap-2 text-xs">
+                  <dt className="text-slate-500">Import fingerprint</dt>
+                  <dd
+                    className="text-slate-400 font-mono truncate max-w-[200px]"
+                    title={expense.import_fingerprint}
+                  >
+                    {expense.import_fingerprint}
+                  </dd>
+                </div>
+              )}
+            </dl>
+          </div>
+          <div className="space-y-3">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+              AI / OCR extraction
+            </h3>
+            {expense.raw_ocr_text ? (
+              <pre className="text-xs text-slate-300 bg-slate-950/80 rounded-lg p-4 max-h-64 overflow-auto whitespace-pre-wrap break-words font-mono">
+                {expense.raw_ocr_text}
+              </pre>
+            ) : (
+              <p className="text-sm text-slate-500">No OCR payload stored for this record.</p>
+            )}
+            <p className="text-xs text-slate-600">
+              Category drill-down on the dashboard runs the same matching rules for duplicate
+              detection across the category; single-record views omit cross-row duplicate flags.
+            </p>
+          </div>
+        </div>
+      </motion.div>
 
       {/* Edit Modal */}
       {showEditModal && (

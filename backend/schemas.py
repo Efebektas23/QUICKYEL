@@ -144,6 +144,9 @@ class ExpenseResponse(BaseModel):
     notes: Optional[str]
     created_at: datetime
     updated_at: datetime
+    # Populated when GET /expenses?audit=true (category drill-down / compliance)
+    matching_status: Optional[str] = None  # matched | unmatched | potential_duplicate
+    source_kind: Optional[str] = None  # bank | receipt | manual (heuristic for SQL store)
 
     class Config:
         from_attributes = True
@@ -154,6 +157,8 @@ class ExpenseListResponse(BaseModel):
     total: int
     page: int
     per_page: int
+    # Sum of cad_amount for current page when audit=true (compare to dashboard totals)
+    reconciliation_total_cad: Optional[float] = None
 
 
 # AI Parsing Response

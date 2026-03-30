@@ -37,6 +37,7 @@ import Link from "next/link";
 import { exportApi, expensesApi, revenueApi } from "@/lib/firebase-api";
 import { formatCurrency, formatDate, cn } from "@/lib/utils";
 import { categoryLabels, categoryColors } from "@/lib/store";
+import { CategoryExpenseDrawer } from "@/components/dashboard/CategoryExpenseDrawer";
 
 const categoryIcons: Record<string, React.ReactNode> = {
   fuel: <Fuel className="w-5 h-5" />,
@@ -86,6 +87,7 @@ export default function DashboardPage() {
   const [selectedPeriod, setSelectedPeriod] = useState<PeriodPreset>("all");
   const [showPeriodMenu, setShowPeriodMenu] = useState(false);
   const [drillDown, setDrillDown] = useState<DrillDownType>(null);
+  const [categoryDrawerCategory, setCategoryDrawerCategory] = useState<string | null>(null);
 
   const currentPeriod = PERIOD_OPTIONS.find((p) => p.id === selectedPeriod) || PERIOD_OPTIONS[0];
 
@@ -668,9 +670,14 @@ export default function DashboardPage() {
       <div className="grid lg:grid-cols-3 gap-6">
         {/* Category Breakdown with Donut Chart */}
         <div className="lg:col-span-2 card p-4 md:p-6">
-          <h2 className="text-lg font-semibold text-white mb-4">
-            Expenses by Category
-          </h2>
+          <div className="flex items-center justify-between gap-2 mb-4">
+            <h2 className="text-lg font-semibold text-white">
+              Expenses by Category
+            </h2>
+            <p className="text-xs text-slate-500 hidden sm:block">
+              Click a category for transactions
+            </p>
+          </div>
           {summaryLoading ? (
             <LoadingSkeleton count={5} />
           ) : summary?.by_category ? (
@@ -699,6 +706,7 @@ export default function DashboardPage() {
                       amount={data.total_cad}
                       count={data.count}
                       total={summary.totals.total_cad}
+                      onSelect={() => setCategoryDrawerCategory(category)}
                     />
                   ))}
               </div>
@@ -765,6 +773,24 @@ export default function DashboardPage() {
       </div>
 
       {/* Quick Actions */}
+      <CategoryExpenseDrawer
+        open={!!categoryDrawerCategory}
+        onClose={() => setCategoryDrawerCategory(null)}
+        category={categoryDrawerCategory}
+        periodStart={currentPeriod.start}
+        periodEnd={currentPeriod.end}
+        expectedTotalCad={
+          categoryDrawerCategory && summary?.by_category?.[categoryDrawerCategory]
+            ? summary.by_category[categoryDrawerCategory].total_cad
+            : 0
+        }
+        expectedCount={
+          categoryDrawerCategory && summary?.by_category?.[categoryDrawerCategory]
+            ? summary.by_category[categoryDrawerCategory].count
+            : 0
+        }
+      />
+
       <div className="card p-6">
         <h2 className="text-lg font-semibold text-white mb-4">
           Quick Actions
@@ -940,21 +966,27 @@ function CategoryBar({
   amount,
   count,
   total,
+  onSelect,
 }: {
   category: string;
   amount: number;
   count: number;
   total: number;
+  onSelect?: () => void;
 }) {
   const percentage = total > 0 ? (amount / total) * 100 : 0;
   const color = categoryColors[category] || "#6B7280";
 
   return (
-    <div className="space-y-2">
+    <button
+      type="button"
+      onClick={onSelect}
+      className="w-full text-left space-y-2 rounded-xl p-2 -m-2 hover:bg-slate-800/40 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50"
+    >
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span
-            className="w-3 h-3 rounded-full"
+            className="w-3 h-3 rounded-full flex-shrink-0"
             style={{ backgroundColor: color }}
           />
           <span className="text-sm text-slate-300">
@@ -975,7 +1007,7 @@ function CategoryBar({
           style={{ backgroundColor: color }}
         />
       </div>
-    </div>
+    </button>
   );
 }
 
@@ -1019,7 +1051,7 @@ function CategoryDonut({
           strokeWidth={strokeWidth}
         />
         {/* Category segments */}
-        {segments.map((seg, idx) => (
+        {segments.map((seg) => (
           <circle
             key={seg.category}
             cx={size / 2}

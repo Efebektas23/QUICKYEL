@@ -22,6 +22,8 @@ export const expensesApi = {
     start_date?: string;
     end_date?: string;
     verified_only?: boolean;
+    /** Adds matching_status, source_kind; reconciliation_total_cad sums all filtered rows */
+    audit?: boolean;
   }) => {
     const response = await api.get("/expenses/", { params });
     return response.data;

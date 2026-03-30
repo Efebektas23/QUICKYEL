@@ -24,59 +24,89 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
+def _sql_audit_for_expense(expense: Expense) -> tuple[str, str]:
+    """Deterministic matching/source hints for SQL-backed expenses (no Firestore entry_type)."""
+    notes = expense.notes or ""
+    has_r = bool(expense.receipt_image_url)
+    if "[Bank Import]" in notes:
+        return ("matched" if has_r else "unmatched", "bank")
+    if has_r:
+        return ("unmatched", "receipt")
+    return ("unmatched", "manual")
+
+
 @router.get("/", response_model=ExpenseListResponse)
 async def list_expenses(
     page: int = Query(1, ge=1),
-    per_page: int = Query(20, ge=1, le=100),
+    per_page: int = Query(20, ge=1, le=500),
     category: Optional[str] = None,
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,
     verified_only: bool = False,
+    audit: bool = Query(
+        False,
+        description="Include matching_status and source_kind for category drill-down / compliance.",
+    ),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """List expenses with pagination and filtering."""
-    # Base query
-    query = select(Expense).where(Expense.user_id == current_user.id)
-    count_query = select(func.count(Expense.id)).where(Expense.user_id == current_user.id)
-    
-    # Apply filters
+    """
+    List expenses with pagination and filtering.
+
+    Use ``GET /expenses?category=<name>&verified_only=true&audit=true`` for a category
+    drill-down aligned with dashboard summaries (reconciliation_total_cad sums all
+    matching rows, not only the current page).
+    """
+    filters = [Expense.user_id == current_user.id]
+
     if category:
         try:
             cat_enum = ExpenseCategory(category)
-            query = query.where(Expense.category == cat_enum)
-            count_query = count_query.where(Expense.category == cat_enum)
+            filters.append(Expense.category == cat_enum)
         except ValueError:
             pass
-    
+
     if start_date:
-        query = query.where(Expense.transaction_date >= start_date)
-        count_query = count_query.where(Expense.transaction_date >= start_date)
-    
+        filters.append(Expense.transaction_date >= start_date)
+
     if end_date:
-        query = query.where(Expense.transaction_date <= end_date)
-        count_query = count_query.where(Expense.transaction_date <= end_date)
-    
+        filters.append(Expense.transaction_date <= end_date)
+
     if verified_only:
-        query = query.where(Expense.is_verified == True)
-        count_query = count_query.where(Expense.is_verified == True)
-    
-    # Get total count
+        filters.append(Expense.is_verified == True)
+
+    query = select(Expense).where(*filters)
+    count_query = select(func.count(Expense.id)).where(*filters)
+    sum_query = select(func.coalesce(func.sum(Expense.cad_amount), 0.0)).where(*filters)
+
     total_result = await db.execute(count_query)
     total = total_result.scalar()
-    
-    # Paginate
+
+    recon_total = None
+    if audit:
+        sum_result = await db.execute(sum_query)
+        recon_total = float(sum_result.scalar() or 0.0)
+
     offset = (page - 1) * per_page
     query = query.order_by(Expense.transaction_date.desc()).offset(offset).limit(per_page)
-    
+
     result = await db.execute(query)
     expenses = result.scalars().all()
-    
+
+    out: List[ExpenseResponse] = []
+    for e in expenses:
+        base = ExpenseResponse.model_validate(e)
+        if audit:
+            ms, sk = _sql_audit_for_expense(e)
+            base = base.model_copy(update={"matching_status": ms, "source_kind": sk})
+        out.append(base)
+
     return ExpenseListResponse(
-        expenses=[ExpenseResponse.model_validate(e) for e in expenses],
+        expenses=out,
         total=total,
         page=page,
-        per_page=per_page
+        per_page=per_page,
+        reconciliation_total_cad=recon_total,
     )
 
 
