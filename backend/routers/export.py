@@ -15,6 +15,7 @@ from database import get_db
 from models import User, Expense, ExpenseCategory
 from routers.auth import get_current_user
 from bc_expense_tax import effective_recoverable_itc_cad, itc_source_label, net_expense_cad
+from expense_operating import operating_expenses_for_export
 
 router = APIRouter()
 
@@ -58,8 +59,8 @@ async def export_csv(
     current_user: User = Depends(get_current_user)
 ):
     """
-    Export expenses to CSV format for accountants.
-    
+    Export operating expenses to CSV (rows reclassified to Assets / CCA are excluded).
+
     Includes ALL required fields per the Final Implementation Brief:
     - Date | Vendor | Category
     - Original Currency | Original Amount
@@ -95,7 +96,7 @@ async def export_csv(
     query = query.order_by(Expense.transaction_date.desc())
     
     result = await db.execute(query)
-    expenses = result.scalars().all()
+    expenses = operating_expenses_for_export(list(result.scalars().all()))
     
     # Create CSV in memory
     output = io.StringIO()
@@ -233,7 +234,7 @@ async def export_xlsx(
     query = query.order_by(Expense.transaction_date.desc())
     
     result = await db.execute(query)
-    expenses = result.scalars().all()
+    expenses = operating_expenses_for_export(list(result.scalars().all()))
     
     # Prepare data for DataFrame
     data = []
@@ -420,7 +421,7 @@ async def get_summary(
         query = query.where(Expense.transaction_date <= end_date)
     
     result = await db.execute(query)
-    expenses = result.scalars().all()
+    expenses = operating_expenses_for_export(list(result.scalars().all()))
     
     # Calculate summaries with separate tax totals
     total_cad = sum(e.cad_amount or 0 for e in expenses)

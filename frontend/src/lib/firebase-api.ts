@@ -2897,6 +2897,9 @@ export const exportApi = {
       expenses = expenses.filter(e => e.transaction_date && new Date(e.transaction_date) <= endDate);
     }
 
+    const operatingExpenses = expenses.filter((e) => !isExpenseReclassifiedToAsset(e));
+    const reclassifiedAssetCount = expenses.length - operatingExpenses.length;
+
     // CSV Header (aligns with dashboard net-of-ITC logic)
     const headers = [
       "Date",
@@ -2916,8 +2919,8 @@ export const exportApi = {
       "Notes"
     ];
 
-    // CSV Rows
-    const rows = expenses.map(expense => {
+    // CSV Rows (operating only — matches dashboard / Summary; assets use CCA / Assets export)
+    const rows = operatingExpenses.map(expense => {
       const paymentSource = expense.payment_source === "personal_card" ? "Personal Card" :
         expense.payment_source === "company_card" ? "Company Card" :
           expense.payment_source === "bank_checking" ? "Bank / Checking" :
@@ -3014,7 +3017,7 @@ export const exportApi = {
     ];
 
     // ===== SUMMARY (P&L uses operating expenses only; excludes reclassified-to-asset) =====
-    const pnlExpenses = expenses.filter((e) => !isExpenseReclassifiedToAsset(e));
+    const pnlExpenses = operatingExpenses;
     const totalNetExpensesCAD = pnlExpenses.reduce((sum, e) => sum + getNetExpenseCad(e), 0);
     const totalGrossOperatingCAD = pnlExpenses.reduce((sum, e) => sum + (e.cad_amount || 0), 0);
     const totalItcEffective = pnlExpenses.reduce((sum, e) => sum + getEffectiveRecoverableItcCad(e), 0);
@@ -3033,8 +3036,9 @@ export const exportApi = {
       `"Total GST+HST Recoverable (ITC) — asset","${totalItcEffective.toFixed(2)}"`,
       `"PST (6-10%) — not recoverable (sunk; included in net expense)","${totalPstRecorded.toFixed(2)}"`,
       `"",""`,
-      `"Expense row count (export)","${expenses.length}"`,
-      `"Operating expense rows (excl. reclassified to asset)","${pnlExpenses.length}"`,
+      `"Expense rows in Expenses section (operating only)","${operatingExpenses.length}"`,
+      `"Reclassified to asset (excluded from Expenses section)","${reclassifiedAssetCount}"`,
+      `"Verified expense rows in period (before asset exclusion)","${expenses.length}"`,
       `"Revenue Count","${revenues.length}"`
     ];
 
@@ -3077,8 +3081,11 @@ export const exportApi = {
       );
     }
 
+    const operatingExpenses = expenses.filter((e) => !isExpenseReclassifiedToAsset(e));
+    const reclassifiedAssetCount = expenses.length - operatingExpenses.length;
+
     // Prepare data for Excel with separate tax columns + net expense / ITC source (dashboard logic)
-    const excelData = expenses.map(expense => {
+    const excelData = operatingExpenses.map(expense => {
       const category = expense.category || "uncategorized";
       const deductionRate = DEDUCTION_RATES[category] ?? 0.0;
       const deductibleAmount = (expense.cad_amount || 0) * deductionRate;
@@ -3228,7 +3235,7 @@ export const exportApi = {
     ];
 
     // ===== SUMMARY SHEET (operating expenses excl. reclassified; net = gross − effective ITC) =====
-    const expensesForPnl = expenses.filter((e) => !isExpenseReclassifiedToAsset(e));
+    const expensesForPnl = operatingExpenses;
     const totalNetExpensesCAD = expensesForPnl.reduce((sum, e) => sum + getNetExpenseCad(e), 0);
     const totalGrossOperatingCAD = expensesForPnl.reduce((sum, e) => sum + (e.cad_amount || 0), 0);
     const totalItcEffective = expensesForPnl.reduce((sum, e) => sum + getEffectiveRecoverableItcCad(e), 0);
@@ -3262,8 +3269,9 @@ export const exportApi = {
       { "Metric": "", "Value": "" },
       { "Metric": "Tax Deductions (T2125)", "Value": totalDeductible.toFixed(2) },
       { "Metric": "", "Value": "" },
-      { "Metric": "Expense rows (export)", "Value": expenses.length.toString() },
-      { "Metric": "Operating rows (excl. reclassified to asset)", "Value": expensesForPnl.length.toString() },
+      { "Metric": "Expense rows in Expenses sheet (operating only)", "Value": operatingExpenses.length.toString() },
+      { "Metric": "Reclassified to asset (excluded)", "Value": reclassifiedAssetCount.toString() },
+      { "Metric": "Verified rows in period (before asset exclusion)", "Value": expenses.length.toString() },
       { "Metric": "Revenue rows", "Value": revenues.length.toString() },
     ];
 

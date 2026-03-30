@@ -407,8 +407,9 @@ export default function ExportPage() {
           Download Report
         </h2>
         <p className="text-slate-400 mb-6">
-          Export all verified expenses with full details including exchange rates,
-          CAD amounts, and receipt links.
+          Export verified operating expenses with full details (exchange rates, CAD amounts,
+          receipt links). Rows reclassified to Assets / CCA are excluded here — use the CCA
+          schedule export for capital assets.
         </p>
         <div className="flex flex-col sm:flex-row gap-4">
           <button
@@ -447,6 +448,10 @@ export default function ExportPage() {
           What's included in the export?
         </h3>
         <ul className="space-y-2 text-slate-400 text-sm">
+          <li className="flex items-start gap-2">
+            <span className="text-yel-500">✓</span>
+            Operating expenses only (excludes items reclassified to Assets)
+          </li>
           <li className="flex items-start gap-2">
             <span className="text-yel-500">✓</span>
             Transaction date and vendor name
