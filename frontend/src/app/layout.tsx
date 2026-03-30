@@ -61,7 +61,7 @@ export default function RootLayout({
       className={`${inter.variable} ${outfit.variable} ${jetbrainsMono.variable} ${spaceGrotesk.variable}`}
     >
       <head>
-        <link rel="apple-touch-icon" href="/icons/icon-192x192.png" />
+        <link rel="apple-touch-icon" href="/icons/icon-192x192.svg" />
         <meta name="mobile-web-app-capable" content="yes" />
       </head>
       <body className="font-sans antialiased bg-slate-950 text-white min-h-screen">

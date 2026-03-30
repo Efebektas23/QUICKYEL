@@ -1,6 +1,6 @@
 /** Client-side gate credentials (embedded for closed deployment). */
 export const SITE_AUTH_USERNAME = "ozyel";
-export const SITE_AUTH_PASSWORD = "2224ozyel.";
+export const SITE_AUTH_PASSWORD = "2224ozyel";
 
 const STORAGE_KEY = "quickyel_site_auth";
 
