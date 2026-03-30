@@ -41,10 +41,23 @@ def _is_rbc_usd_business_pad_tch_expense(tx: dict) -> bool:
         and "tch" in combo
     )
 
+
+def _is_credit_card_payment_thank_you(desc1: str) -> bool:
+    """Card statement credit from paying the balance — not business income."""
+    d = (desc1 or "").lower()
+    if "thank you" not in d and "merci" not in d:
+        return False
+    return (
+        "payment - thank you" in d
+        or "paiement - merci" in d
+        or "payment received" in d
+    )
+
+
 # Gemini prompt for bank transaction categorization
 BANK_CATEGORIZATION_PROMPT = """You are an expert Canadian accountant for a trucking/logistics company (BACKTAS GLOBAL LOGISTICS ULC).
-You need to categorize bank transactions from an RBC business chequing account.
-The account may be either a CAD account or a USD account - check the column amounts.
+You need to categorize bank transactions from RBC business accounts: **chequing** (CAD/USD) and **credit card** exports.
+The row may have **CAD$ only**, **USD$ only** (native US card or USD chequing), or both — use the non-empty amount column(s).
 
 COMPANY CONTEXT:
 - Trucking/logistics company operating in Canada and USA
@@ -55,11 +68,13 @@ COMPANY CONTEXT:
 - Has "TCH CANADA" / "Business PAD" on the **CAD** account = truck/equipment **lease** (rent_lease) to TCH Canada
 - **RBC USD account (07760-4001350)**: debits labeled **Business PAD** with **TCH** (and often broker context) are **RXO fuel card / fuel program** charges — MUST use category **"fuel"**, vendor **"RXO"**, NOT rent_lease
 - Company has two RBC accounts: one CAD (07760-1001270) and one USD (07760-4001350)
+- **US RBC Visa/Mastercard (USD native amounts)**: operating expenses in the USA (tolls, permits, fuel, lumpers, software, etc.) — still use the same expense categories; **do not** treat USD as CAD.
 - Owner names: "Yeliz Bektas", "Ozan Bektas"
 
 ⚠️ CRITICAL - MUST CLASSIFY THESE AS "transfer" (NOT income, NOT expense):
    - "Funds transfer" (ANY direction, positive or negative) = ALWAYS "transfer"
    - "PAYMENT - THANK YOU / PAIEMENT - MERCI" = Credit card payment = ALWAYS "transfer"
+   - "PAYMENT RECEIVED -- THANK YOU" (US card) = paying down the card = ALWAYS "transfer" (same as above — NOT income)
    - "Online Banking transfer" = ALWAYS "transfer"
    - "Credit Memo" about currency exchange or internal = ALWAYS "transfer"
    - e-Transfer from owner/family (Yeliz Bektas, Ozan Bektas) = ALWAYS "transfer"
@@ -85,24 +100,24 @@ TRANSACTION CLASSIFICATION RULES:
    - "Misc Payment" + "J D FACTORS" = Factoring payment received → "income"
    - "Deposit" = Cash or cheque deposit → "income" (unless description says otherwise)
    - "CASH BACK REWARD" = "income" (bank reward)
-   - ⚠️ NEVER classify "Funds transfer", "PAYMENT - THANK YOU", "Credit Memo" as income!
+   - ⚠️ NEVER classify "Funds transfer", "PAYMENT - THANK YOU", "PAYMENT RECEIVED -- THANK YOU", "Credit Memo" as income!
    - ⚠️ NEVER classify GST/HST refunds, RECEIVER GENERAL, CRA deposits as income! Use "tax_refund"!
 
 2. EXPENSES (negative amounts) - classify with one of these categories:
    - "insurance": ICBC, CAFO Inc, any insurance premium
    - "payroll": "Direct Deposits (PDS)", "PAY EMP-VENDOR", salary/wage payments
-   - "office_admin": "Monthly fee", "Electronic transaction fee", "Bill Payment PAY-FILE FEES", "INTERAC e-Transfer fee", "Service fee", "Items on deposit fee", "In branch cash deposited fee", "Online Banking wire fee", bank charges
+   - "office_admin": "Monthly fee", "Electronic transaction fee", "Bill Payment PAY-FILE FEES", "INTERAC e-Transfer fee", "Service fee", "Items on deposit fee", "In branch cash deposited fee", "Online Banking wire fee", bank charges; **US card**: OPENAI, CURSOR, SaaS; FLEETSMARTS-style fleet software
    - "factoring_fees": Any J D Factors fees or charges (NOT incoming payments)
-   - "other_expenses": "COMMERCIAL TAXES", "EMPTX", tax remittances
+   - "other_expenses": "COMMERCIAL TAXES", "EMPTX", tax remittances; lumper/unload (CP * TRUCK UNLOAD, LINEAGE, KEHE, etc.), court/civil fees, US state tax portals (NM, CT) when not GST/HST
    - "rent_lease": **CAD account only** — "Business PAD" + "TCH CANADA" = truck/equipment lease to TCH Canada (recurring lease — NOT a dealer vehicle/trailer purchase)
    - ⚠️ Vehicle or trailer **purchase / loan principal** payments to **auto dealers**, "OpenRoad", "Honda", "Toyota", "Quest Trailer", trailer vendors, etc. are **capital assets** — use "rent_lease" ONLY for true operating leases; for purchases use the best expense category tag for audit BUT set "is_asset_candidate": true and prefer "other_expenses" or "maintenance_repairs" over "rent_lease" if unsure (user will reclassify to Asset in app)
-   - "fuel": Gas stations (PETRO-CANADA, SHELL, etc.); **USD account** — "Business PAD" + "TCH" = **RXO fuel** (NOT rent_lease)
+   - "fuel": Gas stations (PETRO-CANADA, SHELL, CHEVRON, FLYING J, etc.); **USD account** — "Business PAD" + "TCH" = **RXO fuel** (NOT rent_lease)
    - "subcontractor": e-Transfer to known contractors/drivers
    - "professional_fees": Payments to accountants, lawyers, consultants
-   - "loan_interest": Loan payments, "PURCHASE INTEREST"
+   - "loan_interest": Loan payments, "PURCHASE INTEREST", "INTEREST CHARGE-PURCHASE" (credit card interest)
    - "maintenance_repairs": Vehicle repairs, parts
-   - "licenses_dues": Government permits, licenses
-   - "tolls_scales": Tolls, bridge fees, scale fees
+   - "licenses_dues": Government permits, licenses; **US**: UNIFIED CARRIER REGISTRATION (UCR), state permit portals
+   - "tolls_scales": Tolls, bridge fees, scale fees; **US**: DTOPS, PREPASS, EZPASS, CBP border fees, CAT SCALE, ODOT tolls
    - "meals_entertainment": Restaurants, food, DENNY'S, TIM HORTONS
    - "travel_lodging": Hotels, motels
    - "uncategorized": Cannot determine category
@@ -110,7 +125,7 @@ TRANSACTION CLASSIFICATION RULES:
 
 3. TRANSFERS/NON-BUSINESS (MUST flag correctly):
    - "Funds transfer" (positive OR negative) = ALWAYS "transfer"
-   - "PAYMENT - THANK YOU / PAIEMENT - MERCI" = ALWAYS "transfer" (credit card payment)
+   - "PAYMENT - THANK YOU / PAIEMENT - MERCI" or "PAYMENT RECEIVED -- THANK YOU" = ALWAYS "transfer" (credit card payment)
    - "Online Banking transfer" = ALWAYS "transfer"
    - "Cash withdrawal" = ALWAYS "owner_draw"
    - "ATM withdrawal" = ALWAYS "owner_draw"
@@ -347,7 +362,7 @@ CATEGORIZE ALL {len(transactions)} TRANSACTIONS AND RETURN JSON ARRAY:"""
                     tx["notes"] = "Inter-account funds transfer"
                     override_count += 1
             
-            elif "payment - thank you" in desc1 or "paiement - merci" in desc1 or "payment - thank you" in desc2:
+            elif _is_credit_card_payment_thank_you(desc1) or _is_credit_card_payment_thank_you(desc2):
                 if tx.get("type") != "transfer":
                     logger.info(f"Override: '{tx.get('description1')}' from '{original_type}' to 'transfer'")
                     tx["type"] = "transfer"
@@ -463,7 +478,7 @@ CATEGORIZE ALL {len(transactions)} TRANSACTIONS AND RETURN JSON ARRAY:"""
                 tx["category"] = "transfer"
                 tx["vendor_name"] = "Internal Transfer"
                 tx["notes"] = "Inter-account funds transfer"
-            elif "payment - thank you" in desc1 or "paiement - merci" in desc1:
+            elif _is_credit_card_payment_thank_you(desc1):
                 tx["type"] = "transfer"
                 tx["category"] = "transfer"
                 tx["vendor_name"] = "Credit Card Payment"
@@ -612,15 +627,71 @@ CATEGORIZE ALL {len(transactions)} TRANSACTIONS AND RETURN JSON ARRAY:"""
                     tx["category"] = "other_expenses"
                     tx["vendor_name"] = tx.get("description2", "") or "Wire Payment"
                     tx["notes"] = "Wire payment"
-                elif "purchase interest" in desc1:
+                elif "purchase interest" in desc1 or "interest charge" in desc1:
                     tx["category"] = "loan_interest"
                     tx["vendor_name"] = "RBC"
                     tx["notes"] = "Credit card / loan interest"
-                elif any(kw in desc1 or kw in desc2 for kw in ["petro-canada", "shell", "esso", "husky", "flying j"]):
+                elif "minimum charge" in desc1 or "cash advance fee" in desc1:
+                    tx["category"] = "office_admin"
+                    tx["vendor_name"] = "RBC Card"
+                    tx["notes"] = "Credit card fee"
+                elif any(kw in desc1 for kw in ["dtops", "prepass", "ezpass", "cat scale"]):
+                    tx["category"] = "tolls_scales"
+                    tx["vendor_name"] = tx["description1"][:72]
+                    tx["notes"] = "Toll / scale / weigh (US)"
+                elif desc1.startswith("cbp ") or " cbp " in desc1:
+                    tx["category"] = "tolls_scales"
+                    tx["vendor_name"] = tx["description1"][:72]
+                    tx["notes"] = "Border / CBP fee (US)"
+                elif "odot" in desc1:
+                    tx["category"] = "tolls_scales"
+                    tx["vendor_name"] = tx["description1"][:72]
+                    tx["notes"] = "Ohio DOT toll / road charge"
+                elif "unified carrier regist" in desc1:
+                    tx["category"] = "licenses_dues"
+                    tx["vendor_name"] = "UCR / Unified Carrier Registration"
+                    tx["notes"] = "US carrier registration"
+                elif any(kw in desc1 for kw in ["truck unload", "lineagelogistic", "kehe distribut"]):
+                    tx["category"] = "other_expenses"
+                    tx["vendor_name"] = tx["description1"][:72]
+                    tx["notes"] = "Lumper / warehouse unload (trucking)"
+                elif any(kw in desc1 for kw in ["nm tax & revenue", "ct dor", "aci*ct dor"]):
+                    tx["category"] = "other_expenses"
+                    tx["vendor_name"] = tx["description1"][:72]
+                    tx["notes"] = "US state tax / permit portal"
+                elif "svc fee odot" in desc1 or "odot internet" in desc1:
+                    tx["category"] = "office_admin"
+                    tx["vendor_name"] = tx["description1"][:72]
+                    tx["notes"] = "ODOT online service fee"
+                elif any(kw in desc1 for kw in ["commercial tire", "les schwab", "love's tire", "eddie's truck"]):
+                    tx["category"] = "maintenance_repairs"
+                    tx["vendor_name"] = tx["description1"][:72]
+                    tx["notes"] = "Tires / truck auto (US)"
+                elif "fleetsmarts" in desc1:
+                    tx["category"] = "office_admin"
+                    tx["vendor_name"] = "FleetSmarts"
+                    tx["notes"] = "Fleet / telematics software"
+                elif "openai" in desc1 or "cursor" in desc1 or "iyizico" in desc1:
+                    tx["category"] = "office_admin"
+                    tx["vendor_name"] = tx["description1"][:48]
+                    tx["notes"] = "Software / hosting / AI subscription"
+                elif "tractor supply" in desc1:
+                    tx["category"] = "maintenance_repairs"
+                    tx["vendor_name"] = tx["description1"][:72]
+                    tx["notes"] = "Truck / shop supplies"
+                elif any(kw in desc1 for kw in ["justice ct", "justice court", "county justice"]):
+                    tx["category"] = "other_expenses"
+                    tx["vendor_name"] = tx["description1"][:72]
+                    tx["notes"] = "Court / civil fee (verify)"
+                elif "hospital" in desc1:
+                    tx["category"] = "other_expenses"
+                    tx["vendor_name"] = tx["description1"][:72]
+                    tx["notes"] = "Medical (verify business purpose)"
+                elif any(kw in desc1 or kw in desc2 for kw in ["petro-canada", "shell", "esso", "husky", "flying j", "chevron"]):
                     tx["category"] = "fuel"
                     tx["vendor_name"] = tx["description1"].split(" - ")[0].strip() if " - " in tx["description1"] else tx["description1"]
                     tx["notes"] = "Fuel purchase"
-                elif any(kw in desc1 or kw in desc2 for kw in ["denny", "tim horton", "mcdonald", "subway", "restaurant"]):
+                elif any(kw in desc1 or kw in desc2 for kw in ["denny", "tim horton", "mcdonald", "subway", "restaurant", "kfc", "carl's jr", "taco bell", "7-eleven", "king soopers", "grocery outlet"]):
                     tx["category"] = "meals_entertainment"
                     tx["vendor_name"] = tx["description1"].split(" - ")[0].strip() if " - " in tx["description1"] else tx["description1"]
                     tx["notes"] = "Meal/food purchase"
