@@ -31,7 +31,6 @@ import {
   factoringApi,
   duplicateCheckApi,
   revenueApi,
-  expensesApi,
   BankTransaction,
   BankImportSummary,
   FactoringEntry,
@@ -46,7 +45,6 @@ type ImportStep = "upload" | "review" | "done";
 export default function ImportPage() {
   const [activeTab, setActiveTab] = useState<ActiveTab>("bank");
   const [isCleaningUp, setIsCleaningUp] = useState(false);
-  const [isPadTchFix, setIsPadTchFix] = useState(false);
   const [cleanupResult, setCleanupResult] = useState<{
     expenses_deleted: number;
     revenues_deleted: number;
@@ -82,41 +80,6 @@ export default function ImportPage() {
     }
   };
 
-  const handlePadTchFuelFix = async () => {
-    if (
-      !confirm(
-        "Update existing data: move RBC USD Business PAD + TCH lines from Rent/Lease to Fuel (vendor RXO).\n\n" +
-          "CAD-only TCH Canada lease payments (no USD in the line) are left unchanged.\n\nContinue?"
-      )
-    ) {
-      return;
-    }
-
-    setIsPadTchFix(true);
-    toast.loading("Reclassifying PAD/TCH fuel lines…", { id: "pad-tch-fix" });
-    try {
-      const r = await expensesApi.reclassifyRbcUsdPadTchFuelFromRentLease();
-      queryClient.invalidateQueries({ queryKey: ["expenses"] });
-      queryClient.invalidateQueries({ queryKey: ["summary"] });
-      queryClient.invalidateQueries({ queryKey: ["category-audit"] });
-      if (r.updated === 0) {
-        toast.success(
-          `Scanned ${r.scanned} Rent/Lease row(s); none matched the USD PAD+TCH pattern.`,
-          { id: "pad-tch-fix", duration: 6000 }
-        );
-      } else {
-        toast.success(
-          `Updated ${r.updated} expense(s) to Fuel (RXO). Scanned ${r.scanned} Rent/Lease row(s).`,
-          { id: "pad-tch-fix", duration: 7000 }
-        );
-      }
-    } catch (error: any) {
-      toast.error(error?.message || "Repair failed", { id: "pad-tch-fix" });
-    } finally {
-      setIsPadTchFix(false);
-    }
-  };
-
   return (
     <div className="space-y-4 md:space-y-8">
       {/* Page Header */}
@@ -130,26 +93,6 @@ export default function ImportPage() {
           </p>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
-          <button
-            type="button"
-            onClick={handlePadTchFuelFix}
-            disabled={isPadTchFix}
-            className="text-xs px-2.5 md:px-3 py-1.5 md:py-2 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 rounded-lg border border-amber-500/30 transition-all flex items-center gap-1.5 flex-shrink-0"
-            title="Fix historical data: RBC USD Business PAD+TCH wrongly under Rent/Lease → Fuel (RXO)"
-          >
-            {isPadTchFix ? (
-              <>
-                <Loader2 className="w-3 h-3 animate-spin" />
-                <span className="hidden sm:inline">Fixing…</span>
-              </>
-            ) : (
-              <>
-                <ArrowUpDown className="w-3 h-3" />
-                <span className="hidden sm:inline">Fix PAD/TCH → Fuel</span>
-                <span className="sm:hidden">PAD/TCH→Fuel</span>
-              </>
-            )}
-          </button>
           <button
             onClick={handleCleanup}
             disabled={isCleaningUp}
