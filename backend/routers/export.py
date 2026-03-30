@@ -60,7 +60,7 @@ async def export_csv(
     current_user: User = Depends(get_current_user)
 ):
     """
-    Export operating expenses to CSV (rows reclassified to Assets / CCA are excluded).
+    Export operating expenses to CSV (excludes Assets/CCA reclasses and Personel category).
 
     Includes ALL required fields per the Final Implementation Brief:
     - Date | Vendor | Category

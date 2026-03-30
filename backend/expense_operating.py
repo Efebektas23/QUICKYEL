@@ -2,7 +2,7 @@
 
 from typing import List
 
-from models import Expense
+from models import Expense, ExpenseCategory
 
 RECLASSIFIED_TO_ASSET_MARKER = "[RECLASSIFIED TO ASSET]"
 
@@ -18,5 +18,14 @@ def is_expense_reclassified_to_asset(expense: Expense) -> bool:
     return RECLASSIFIED_TO_ASSET_MARKER in notes
 
 
+def is_excluded_from_business_pl(expense: Expense) -> bool:
+    """Personel — not part of operating P&L or accountant exports."""
+    return expense.category == ExpenseCategory.PERSONAL
+
+
 def operating_expenses_for_export(expenses: List[Expense]) -> List[Expense]:
-    return [e for e in expenses if not is_expense_reclassified_to_asset(e)]
+    return [
+        e
+        for e in expenses
+        if not is_expense_reclassified_to_asset(e) and not is_excluded_from_business_pl(e)
+    ]

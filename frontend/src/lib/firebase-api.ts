@@ -107,6 +107,13 @@ export function isExpenseReclassifiedToAsset(
   return n.includes("[RECLASSIFIED TO ASSET]");
 }
 
+/** Personel — excluded from P&L totals, dashboard metrics, and CSV/XLSX (still listed on Expenses). */
+export const EXCLUDED_FROM_BUSINESS_PL_CATEGORY = "personal";
+
+export function isExcludedFromBusinessPl(e: Pick<Expense, "category">): boolean {
+  return (e.category || "") === EXCLUDED_FROM_BUSINESS_PL_CATEGORY;
+}
+
 /** Set by assetsApi init — avoids forward reference when exportApi.getSummary lists assets for CCA. */
 let listAssetsForSummary: (() => Promise<CCAAsset[]>) | null = null;
 
@@ -2901,6 +2908,7 @@ export const exportApi = {
 
     const operatingExpenses = expenses.filter((e) => !isExpenseReclassifiedToAsset(e));
     const reclassifiedAssetCount = expenses.length - operatingExpenses.length;
+    const plExpenses = operatingExpenses.filter((e) => !isExcludedFromBusinessPl(e));
 
     // CSV Header (aligns with dashboard net-of-ITC logic)
     const headers = [
@@ -2921,8 +2929,8 @@ export const exportApi = {
       "Notes"
     ];
 
-    // CSV Rows (operating only — matches dashboard / Summary; assets use CCA / Assets export)
-    const rows = operatingExpenses.map(expense => {
+    // CSV Rows (operating P&L only — excludes Personel and reclassified-to-asset)
+    const rows = plExpenses.map(expense => {
       const paymentSource = expense.payment_source === "personal_card" ? "Personal Card" :
         expense.payment_source === "company_card" ? "Company Card" :
           expense.payment_source === "bank_checking" ? "Bank / Checking" :
@@ -3018,8 +3026,8 @@ export const exportApi = {
       ...revenueRows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(","))
     ];
 
-    // ===== SUMMARY (P&L uses operating expenses only; excludes reclassified-to-asset) =====
-    const pnlExpenses = operatingExpenses;
+    // ===== SUMMARY (P&L excludes Personel and reclassified-to-asset) =====
+    const pnlExpenses = plExpenses;
     const totalNetExpensesCAD = pnlExpenses.reduce((sum, e) => sum + getNetExpenseCad(e), 0);
     const totalGrossOperatingCAD = pnlExpenses.reduce((sum, e) => sum + (e.cad_amount || 0), 0);
     const totalItcEffective = pnlExpenses.reduce((sum, e) => sum + getEffectiveRecoverableItcCad(e), 0);
@@ -3038,7 +3046,7 @@ export const exportApi = {
       `"Total GST+HST Recoverable (ITC) — asset","${totalItcEffective.toFixed(2)}"`,
       `"PST (6-10%) — not recoverable (sunk; included in net expense)","${totalPstRecorded.toFixed(2)}"`,
       `"",""`,
-      `"Expense rows in Expenses section (operating only)","${operatingExpenses.length}"`,
+      `"Expense rows in Expenses section (P&L operating only)","${plExpenses.length}"`,
       `"Reclassified to asset (excluded from Expenses section)","${reclassifiedAssetCount}"`,
       `"Verified expense rows in period (before asset exclusion)","${expenses.length}"`,
       `"Revenue Count","${revenues.length}"`
@@ -3085,9 +3093,10 @@ export const exportApi = {
 
     const operatingExpenses = expenses.filter((e) => !isExpenseReclassifiedToAsset(e));
     const reclassifiedAssetCount = expenses.length - operatingExpenses.length;
+    const plExpenses = operatingExpenses.filter((e) => !isExcludedFromBusinessPl(e));
 
     // Prepare data for Excel with separate tax columns + net expense / ITC source (dashboard logic)
-    const excelData = operatingExpenses.map(expense => {
+    const excelData = plExpenses.map(expense => {
       const category = expense.category || "uncategorized";
       const deductionRate = DEDUCTION_RATES[category] ?? 0.0;
       const deductibleAmount = (expense.cad_amount || 0) * deductionRate;
@@ -3236,8 +3245,8 @@ export const exportApi = {
       { wch: 30 },  // Notes
     ];
 
-    // ===== SUMMARY SHEET (operating expenses excl. reclassified; net = gross − effective ITC) =====
-    const expensesForPnl = operatingExpenses;
+    // ===== SUMMARY SHEET (P&L excludes Personel and reclassified-to-asset) =====
+    const expensesForPnl = plExpenses;
     const totalNetExpensesCAD = expensesForPnl.reduce((sum, e) => sum + getNetExpenseCad(e), 0);
     const totalGrossOperatingCAD = expensesForPnl.reduce((sum, e) => sum + (e.cad_amount || 0), 0);
     const totalItcEffective = expensesForPnl.reduce((sum, e) => sum + getEffectiveRecoverableItcCad(e), 0);
@@ -3271,7 +3280,7 @@ export const exportApi = {
       { "Metric": "", "Value": "" },
       { "Metric": "Tax Deductions (T2125)", "Value": totalDeductible.toFixed(2) },
       { "Metric": "", "Value": "" },
-      { "Metric": "Expense rows in Expenses sheet (operating only)", "Value": operatingExpenses.length.toString() },
+      { "Metric": "Expense rows in Expenses sheet (P&L operating only)", "Value": plExpenses.length.toString() },
       { "Metric": "Reclassified to asset (excluded)", "Value": reclassifiedAssetCount.toString() },
       { "Metric": "Verified rows in period (before asset exclusion)", "Value": expenses.length.toString() },
       { "Metric": "Revenue rows", "Value": revenues.length.toString() },
@@ -3302,6 +3311,7 @@ export const exportApi = {
     // Only count verified expenses for summary (matching backend behavior)
     let filteredExpenses = allExpenses.expenses.filter(e => e.is_verified);
     filteredExpenses = filteredExpenses.filter((e) => !isExpenseReclassifiedToAsset(e));
+    filteredExpenses = filteredExpenses.filter((e) => !isExcludedFromBusinessPl(e));
 
     // Apply date filters if provided
     if (params?.start_date) {
@@ -3750,6 +3760,7 @@ export const assetsApi = {
 
     for (const expense of allExpResult.expenses) {
       if (isExpenseReclassifiedToAsset(expense)) continue;
+      if (isExcludedFromBusinessPl(expense)) continue;
 
       const amount = expense.cad_amount || expense.original_amount || 0;
       const result = detectAssetCandidate(

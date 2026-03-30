@@ -43,6 +43,7 @@ import {
   expensesApi,
   revenueApi,
   isExpenseReclassifiedToAsset,
+  isExcludedFromBusinessPl,
 } from "@/lib/firebase-api";
 import { formatCurrency, formatDate, cn } from "@/lib/utils";
 import { categoryLabels, categoryColors } from "@/lib/store";
@@ -206,7 +207,9 @@ export default function DashboardPage() {
         return db - da;
       });
 
-      const forDisplay = expenses.filter((e) => !isExpenseReclassifiedToAsset(e));
+      const forDisplay = expenses.filter(
+        (e) => !isExpenseReclassifiedToAsset(e) && !isExcludedFromBusinessPl(e),
+      );
 
       // Currency split for drill-down
       const cadExpenses = forDisplay.filter((e: any) => (e.original_currency || "CAD") !== "USD");
