@@ -2,13 +2,17 @@
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { isSiteAuthenticated } from "@/lib/site-auth";
 
 export default function HomePage() {
   const router = useRouter();
 
   useEffect(() => {
-    // Redirect directly to dashboard - closed system
-    router.replace("/dashboard");
+    if (isSiteAuthenticated()) {
+      router.replace("/dashboard");
+    } else {
+      router.replace("/login");
+    }
   }, [router]);
 
   return (
