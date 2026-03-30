@@ -15,7 +15,7 @@ import {
   PieChart,
 } from "lucide-react";
 import toast from "react-hot-toast";
-import { exportApi } from "@/lib/firebase-api";
+import { exportApi, assetsApi } from "@/lib/firebase-api";
 import { formatCurrency, downloadBlob, cn } from "@/lib/utils";
 import { categoryLabels, categoryColors } from "@/lib/store";
 
@@ -419,6 +419,9 @@ export default function ExportPage() {
         </div>
       </div>
 
+      {/* CCA Schedule Export */}
+      <CCAExportSection />
+
       {/* Export Info */}
       <div className="p-6 rounded-2xl bg-slate-800/30 border border-slate-800">
         <h3 className="font-semibold text-white mb-3">
@@ -526,3 +529,134 @@ function SummaryCard({
   );
 }
 
+function CCAExportSection() {
+  const currentYear = new Date().getFullYear();
+  const [ccaYear, setCcaYear] = useState(currentYear);
+  const [isExportingCCA, setIsExportingCCA] = useState(false);
+
+  const { data: ccaReport, isLoading: isCCALoading } = useQuery({
+    queryKey: ["cca-export-report", ccaYear],
+    queryFn: () => assetsApi.getCCAReport(ccaYear),
+  });
+
+  const handleCCAExport = async () => {
+    if (!ccaReport || ccaReport.assets.length === 0) {
+      toast.error("No assets to export");
+      return;
+    }
+
+    setIsExportingCCA(true);
+    try {
+      // Build CSV content
+      const headers = [
+        "Asset Name", "CCA Class", "Category", "Vendor",
+        "Purchase Date", "Purchase Cost", "Adjusted Cost",
+        `CCA Deduction (${ccaYear})`, `UCC Balance (${ccaYear})`,
+        "Half-Year Rule Applied", "Notes"
+      ];
+
+      const rows = ccaReport.assets.map((a: any) => {
+        const scheduleEntry = a.ucc_schedule?.find((e: any) => e.year === ccaYear);
+        return [
+          a.name,
+          a.cca_class.replace("class_", "Class ").replace("_", "."),
+          a.category,
+          a.vendor_name,
+          typeof a.purchase_date === "string" ? a.purchase_date : new Date(a.purchase_date).toISOString().split("T")[0],
+          a.purchase_cost.toFixed(2),
+          a.adjusted_cost.toFixed(2),
+          a.ccaForYear.toFixed(2),
+          a.uccBalance.toFixed(2),
+          scheduleEntry?.halfYearApplied ? "Yes" : "No",
+          a.notes || "",
+        ].join(",");
+      });
+
+      // Add totals row
+      rows.push([
+        "TOTAL", "", "", "", "",
+        ccaReport.totalAssetValue.toFixed(2), "",
+        ccaReport.totalCCA.toFixed(2),
+        ccaReport.totalUCC.toFixed(2),
+        "", "",
+      ].join(","));
+
+      const csvContent = [headers.join(","), ...rows].join("\n");
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+      downloadBlob(blob, `cca_schedule_${ccaYear}.csv`);
+      toast.success(`CCA Schedule exported for ${ccaYear}`);
+    } catch (error: any) {
+      toast.error(error.message || "CCA export failed");
+    } finally {
+      setIsExportingCCA(false);
+    }
+  };
+
+  return (
+    <div className="card p-6">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h2 className="text-lg font-semibold text-white">
+            CCA Schedule (Capital Cost Allowance)
+          </h2>
+          <p className="text-xs text-slate-400 mt-0.5">
+            CRA-compliant asset depreciation report
+          </p>
+        </div>
+        <select
+          value={ccaYear}
+          onChange={(e) => setCcaYear(Number(e.target.value))}
+          className="text-sm rounded-lg px-3 py-1.5 border border-slate-700 bg-slate-800/50 text-white"
+        >
+          {[currentYear - 1, currentYear, currentYear + 1].map((yr) => (
+            <option key={yr} value={yr}>{yr}</option>
+          ))}
+        </select>
+      </div>
+
+      {isCCALoading ? (
+        <div className="h-16 bg-slate-800 rounded-xl animate-pulse" />
+      ) : ccaReport && ccaReport.assets.length > 0 ? (
+        <>
+          <div className="grid grid-cols-3 gap-3 mb-4">
+            <div className="p-3 rounded-xl bg-blue-500/10 border border-blue-500/20">
+              <p className="text-xs text-blue-400">Total Asset Value</p>
+              <p className="text-lg font-bold text-blue-400">
+                {formatCurrency(ccaReport.totalAssetValue)}
+              </p>
+            </div>
+            <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
+              <p className="text-xs text-emerald-400">CCA Deduction ({ccaYear})</p>
+              <p className="text-lg font-bold text-emerald-400">
+                {formatCurrency(ccaReport.totalCCA)}
+              </p>
+            </div>
+            <div className="p-3 rounded-xl bg-purple-500/10 border border-purple-500/20">
+              <p className="text-xs text-purple-400">UCC Balance</p>
+              <p className="text-lg font-bold text-purple-400">
+                {formatCurrency(ccaReport.totalUCC)}
+              </p>
+            </div>
+          </div>
+
+          <button
+            onClick={handleCCAExport}
+            disabled={isExportingCCA}
+            className="btn-secondary w-full"
+          >
+            {isExportingCCA ? (
+              <Loader2 className="w-5 h-5 animate-spin" />
+            ) : (
+              <Download className="w-5 h-5" />
+            )}
+            Download CCA Schedule (CSV)
+          </button>
+        </>
+      ) : (
+        <p className="text-slate-500 text-center py-6 text-sm">
+          No assets registered. Visit the Assets page to add depreciable assets.
+        </p>
+      )}
+    </div>
+  );
+}

@@ -990,6 +990,13 @@ function BankImportSection() {
                         </span>
                       </div>
                     )}
+                    {tx.is_asset_candidate && (
+                      <div className="flex items-center gap-1 mt-1">
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-[10px] text-amber-400 font-medium">
+                          ⚡ POTENTIAL ASSET
+                        </span>
+                      </div>
+                    )}
                   </td>
                   <td className="p-3">
                     <span

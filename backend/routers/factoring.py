@@ -1,14 +1,92 @@
 """Factoring Report parser - Parse J D Factors PDF reports using Gemini AI."""
 
-from fastapi import APIRouter, HTTPException, status
+from collections import OrderedDict
+
+from fastapi import APIRouter, HTTPException, Header, status
 from pydantic import BaseModel
 from typing import List, Optional
 import logging
 import json
 import base64
-import google.generativeai as genai
+import copy
+import hashlib
+import threading
+import time as time_module
 
 from config import settings
+from services.resilient_ai import ResilientModelFactory, map_gemini_exception_to_http
+
+# In-process LRU + TTL (single-instance). For multi-instance, front with Redis.
+_PARSE_CACHE: OrderedDict[str, tuple[float, dict]] = OrderedDict()
+_IDEMPOTENCY: OrderedDict[str, tuple[float, str, dict]] = OrderedDict()
+_PARSE_CACHE_LOCK = threading.Lock()
+_PARSE_CACHE_TTL_SEC = 300.0
+_PARSE_CACHE_MAX_KEYS = 64
+_IDEMPOTENCY_TTL_SEC = 300.0
+_IDEMPOTENCY_MAX_KEYS = 128
+_IDEMPOTENCY_KEY_MAX_LEN = 128
+
+
+def _factoring_pdf_cache_key(pdf_bytes: bytes) -> str:
+    return hashlib.sha256(pdf_bytes).hexdigest()
+
+
+def _factoring_cache_get(key: str) -> dict | None:
+    now = time_module.monotonic()
+    with _PARSE_CACHE_LOCK:
+        if key not in _PARSE_CACHE:
+            return None
+        ts, data = _PARSE_CACHE[key]
+        if now - ts > _PARSE_CACHE_TTL_SEC:
+            del _PARSE_CACHE[key]
+            return None
+        _PARSE_CACHE.move_to_end(key)
+        return copy.deepcopy(data)
+
+
+def _factoring_cache_put(key: str, data: dict) -> None:
+    with _PARSE_CACHE_LOCK:
+        if key in _PARSE_CACHE:
+            del _PARSE_CACHE[key]
+        _PARSE_CACHE[key] = (time_module.monotonic(), copy.deepcopy(data))
+        while len(_PARSE_CACHE) > _PARSE_CACHE_MAX_KEYS:
+            _PARSE_CACHE.popitem(last=False)
+
+
+def _idempotency_get(key: str, body_sha: str) -> dict | None:
+    """Return cached dict if key matches same body hash; 409 caller if mismatch."""
+    now = time_module.monotonic()
+    with _PARSE_CACHE_LOCK:
+        if key not in _IDEMPOTENCY:
+            return None
+        ts, stored_sha, data = _IDEMPOTENCY[key]
+        if now - ts > _IDEMPOTENCY_TTL_SEC:
+            del _IDEMPOTENCY[key]
+            return None
+        if stored_sha != body_sha:
+            return None  # signal conflict outside
+        _IDEMPOTENCY.move_to_end(key)
+        return copy.deepcopy(data)
+
+
+def _idempotency_conflict(key: str, body_sha: str) -> bool:
+    with _PARSE_CACHE_LOCK:
+        if key not in _IDEMPOTENCY:
+            return False
+        ts, stored_sha, _ = _IDEMPOTENCY[key]
+        if time_module.monotonic() - ts > _IDEMPOTENCY_TTL_SEC:
+            del _IDEMPOTENCY[key]
+            return False
+        return stored_sha != body_sha
+
+
+def _idempotency_put(key: str, body_sha: str, data: dict) -> None:
+    with _PARSE_CACHE_LOCK:
+        if key in _IDEMPOTENCY:
+            del _IDEMPOTENCY[key]
+        _IDEMPOTENCY[key] = (time_module.monotonic(), body_sha, copy.deepcopy(data))
+        while len(_IDEMPOTENCY) > _IDEMPOTENCY_MAX_KEYS:
+            _IDEMPOTENCY.popitem(last=False)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -116,7 +194,7 @@ class ParseFactoringResponse(BaseModel):
 
 
 class FactoringReportParser:
-    """Service for parsing factoring reports using Gemini AI."""
+    """Service for parsing factoring reports using Gemini AI (retry + fallback)."""
     
     def __init__(self):
         try:
@@ -124,31 +202,63 @@ class FactoringReportParser:
             if not api_key:
                 logger.warning("No Gemini API key found. Factoring parsing disabled.")
                 self.model = None
+                self.model_factory = None
                 return
             
-            genai.configure(api_key=api_key)
-            self.model = genai.GenerativeModel(
-                model_name="gemini-2.0-flash",
-                generation_config={
+            self.model_factory = ResilientModelFactory(
+                api_key=api_key,
+                primary_config={
                     "temperature": 0.1,
                     "top_p": 0.95,
                     "max_output_tokens": 8192,
-                }
+                },
             )
-            logger.info("Factoring report parser initialized")
+            self.model = self.model_factory.primary_model
+            logger.info("Factoring report parser initialized with resilient AI wrapper")
         except Exception as e:
             logger.error(f"Failed to initialize factoring parser: {str(e)}")
             self.model = None
+            self.model_factory = None
     
-    async def parse_pdf(self, pdf_content: bytes, filename: str = "") -> dict:
+    async def parse_pdf(
+        self,
+        pdf_content: bytes,
+        filename: str = "",
+        idempotency_key: Optional[str] = None,
+    ) -> dict:
         """Parse a factoring report PDF using Gemini's multimodal capabilities."""
-        if self.model is None:
+        if self.model is None or self.model_factory is None or not self.model_factory.is_available:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Gemini AI service not available. Please check API key configuration."
             )
         
         try:
+            body_sha = _factoring_pdf_cache_key(pdf_content)
+            if idempotency_key:
+                k = idempotency_key.strip()
+                if len(k) > _IDEMPOTENCY_KEY_MAX_LEN:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Idempotency-Key is too long.",
+                    )
+                if _idempotency_conflict(k, body_sha):
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="Idempotency-Key was already used with a different request body.",
+                    )
+                idem_hit = _idempotency_get(k, body_sha)
+                if idem_hit is not None:
+                    logger.info("Factoring idempotency cache hit")
+                    return idem_hit
+
+            cached = _factoring_cache_get(body_sha)
+            if cached is not None:
+                logger.info("Factoring parse LRU cache hit (same PDF within TTL)")
+                if idempotency_key:
+                    _idempotency_put(idempotency_key.strip(), body_sha, cached)
+                return cached
+
             # Create PDF part for Gemini
             pdf_part = {
                 "mime_type": "application/pdf",
@@ -166,7 +276,10 @@ class FactoringReportParser:
 {FACTORING_REPORT_PROMPT}"""
 
             logger.info(f"Sending factoring PDF to Gemini ({len(pdf_content)} bytes, file: {filename})")
-            response = self.model.generate_content([prompt, pdf_part])
+            response = self.model_factory.generate(
+                prompt=[prompt, pdf_part],
+                operation_name="factoring_pdf",
+            )
             
             content = response.text.strip()
             logger.info(f"Gemini factoring response: {content[:500]}...")
@@ -181,6 +294,9 @@ class FactoringReportParser:
                 content = "\n".join(lines).strip()
             
             data = json.loads(content)
+            _factoring_cache_put(body_sha, data)
+            if idempotency_key:
+                _idempotency_put(idempotency_key.strip(), body_sha, data)
             return data
             
         except json.JSONDecodeError as e:
@@ -191,7 +307,13 @@ class FactoringReportParser:
             )
         except Exception as e:
             logger.error(f"Factoring report parsing failed: {str(e)}", exc_info=True)
-            raise
+            if getattr(e, "ai_suggested_http_status", None) == 503:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="AI is recovering from recent errors. Please wait and try again.",
+                ) from e
+            status, detail = map_gemini_exception_to_http(e)
+            raise HTTPException(status_code=status, detail=detail) from e
 
 
 # Lazy initialization
@@ -205,7 +327,10 @@ def get_factoring_parser() -> FactoringReportParser:
 
 
 @router.post("/parse", response_model=ParseFactoringResponse)
-async def parse_factoring_report(request: ParseFactoringRequest):
+async def parse_factoring_report(
+    request: ParseFactoringRequest,
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+):
     """
     Parse a J D Factors PDF report using Gemini AI.
     
@@ -238,8 +363,12 @@ async def parse_factoring_report(request: ParseFactoringRequest):
         
         logger.info(f"Processing factoring report: {request.filename or 'unknown'} ({len(pdf_content)} bytes)")
         
-        # Parse with Gemini
-        result = await parser.parse_pdf(pdf_content, request.filename or "")
+        # Parse with Gemini (optional Idempotency-Key: stable across client retries)
+        result = await parser.parse_pdf(
+            pdf_content,
+            request.filename or "",
+            idempotency_key=idempotency_key,
+        )
         
         # Build response
         entries = []

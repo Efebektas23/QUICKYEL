@@ -14,6 +14,7 @@ import {
   CreditCard,
   Upload,
   X,
+  Package,
 } from "lucide-react";
 import { useState } from "react";
 import { AnimatePresence } from "framer-motion";
@@ -28,6 +29,7 @@ const mainTabs = [
 
 const moreItems = [
   { href: "/import", label: "Import Data", icon: Download },
+  { href: "/assets", label: "Assets & CCA", icon: Package },
   { href: "/export", label: "Export", icon: FileText },
   { href: "/cards", label: "Cards", icon: CreditCard },
 ];

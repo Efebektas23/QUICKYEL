@@ -9,6 +9,7 @@ const navItems = [
   { href: "/upload", label: "Upload Receipt" },
   { href: "/import", label: "Import" },
   { href: "/expenses", label: "Expenses" },
+  { href: "/assets", label: "Assets" },
   { href: "/revenue", label: "Revenue" },
   { href: "/cards", label: "Cards" },
   { href: "/export", label: "Export" },

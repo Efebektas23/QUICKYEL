@@ -3,12 +3,13 @@ QuickYel - Expense Automation Platform
 Main FastAPI Application - Google Native Stack
 """
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import logging
 
 from config import settings
+from services.resilient_ai import bind_client_retry_attempt, reset_client_retry_attempt
 from database import init_db
 from routers import auth, expenses, users, export, cards, process, revenue, bank_import, factoring
 
@@ -93,6 +94,26 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def ai_client_retry_scope(request: Request, call_next):
+    """
+    X-Client-Retry-Attempt: reduces backend AI retry depth when the client is already
+    retrying (pairs with fetchJsonWithRetry) to limit worst-case Gemini calls.
+    """
+    raw = request.headers.get("x-client-retry-attempt", "0")
+    try:
+        n = int(raw)
+    except ValueError:
+        n = 0
+    n = max(0, min(n, 8))
+    token = bind_client_retry_attempt(n)
+    try:
+        return await call_next(request)
+    finally:
+        reset_client_retry_attempt(token)
+
 
 # Include routers
 app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])

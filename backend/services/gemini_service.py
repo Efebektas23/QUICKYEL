@@ -1,4 +1,10 @@
-"""Google Gemini Service via Google AI SDK for receipt parsing."""
+"""Google Gemini Service via Google AI SDK for receipt parsing.
+
+Enhanced with resilient AI wrapper:
+- Exponential backoff retry (503/429/500)
+- Model fallback (gemini-2.0-flash → gemini-1.5-flash)
+- Circuit breaker (prevents cascade failures)
+"""
 
 import google.generativeai as genai
 import json
@@ -9,6 +15,7 @@ import os
 
 from config import settings
 from schemas import ParsedReceiptData
+from services.resilient_ai import ResilientModelFactory
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +23,7 @@ logger = logging.getLogger(__name__)
 class GeminiService:
     """
     Service for parsing OCR text into structured expense data using Gemini.
-    Uses Google AI SDK (simpler than Vertex AI).
+    Uses Google AI SDK with resilient wrapper for retry/fallback/circuit breaker.
     """
     
     SYSTEM_PROMPT = """You are an expert accountant for a Canadian logistics/trucking company. 
@@ -135,37 +142,41 @@ RESPOND WITH ONLY THIS JSON (no markdown, no explanation):
 }"""
 
     def __init__(self):
-        """Initialize Google AI SDK with API key."""
+        """Initialize Gemini service with resilient AI wrapper."""
         try:
             api_key = settings.gemini_api_key
             if not api_key:
                 logger.warning("No Gemini API key found. AI parsing disabled.")
+                self.model_factory = None
                 self.model = None
                 return
             
-            genai.configure(api_key=api_key)
-            
-            self.model = genai.GenerativeModel(
-                model_name="gemini-2.0-flash",
-                generation_config={
+            # Initialize resilient model factory (retry + fallback + circuit breaker)
+            self.model_factory = ResilientModelFactory(
+                api_key=api_key,
+                primary_config={
                     "temperature": 0.1,
                     "top_p": 0.95,
                     "max_output_tokens": 1024,
                 }
             )
             
-            logger.info("Gemini service initialized via Google AI SDK")
+            # Keep self.model for backward compatibility checks
+            self.model = self.model_factory.primary_model
+            
+            logger.info("Gemini service initialized with resilient AI wrapper")
             
         except Exception as e:
             logger.error(f"Failed to initialize Gemini service: {str(e)}")
+            self.model_factory = None
             self.model = None
     
     async def parse_receipt(self, ocr_text: str) -> ParsedReceiptData:
-        """Parse OCR text into structured expense data using Gemini."""
+        """Parse OCR text into structured expense data using Gemini with retry/fallback."""
         
         # Fallback if no model available
-        if self.model is None:
-            logger.warning("Gemini model not available, returning empty parsed data")
+        if self.model_factory is None or not self.model_factory.is_available:
+            logger.warning("Gemini models not available, returning empty parsed data")
             return ParsedReceiptData(confidence=0.0)
         
         try:
@@ -179,7 +190,12 @@ RAW DOCUMENT TEXT (receipt or invoice):
 EXTRACT AND RETURN JSON:"""
 
             logger.info(f"Sending OCR text to Gemini ({len(ocr_text)} chars)")
-            response = self.model.generate_content(prompt)
+            
+            # Use resilient generate with retry + fallback + circuit breaker
+            response = self.model_factory.generate(
+                prompt=prompt,
+                operation_name="receipt_parsing",
+            )
             
             content = response.text.strip()
             logger.info(f"Gemini raw response: {content[:500]}...")

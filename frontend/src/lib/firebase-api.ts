@@ -21,6 +21,7 @@ import {
   deleteObject,
 } from "firebase/storage";
 import * as XLSX from "xlsx";
+import { fetchJsonWithRetry } from "./fetch-with-retry";
 
 // Collection references
 const EXPENSES_COLLECTION = "expenses";
@@ -393,22 +394,18 @@ export const expensesApi = {
       console.log("🤖 Sending to backend for processing...");
       // Use centralized API URL from runtime-config
       const { API_URL } = await import("./runtime-config");
-      const response = await fetch(`${API_URL}/api/process-receipt/`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          expense_id: expenseId,
-          image_url: imageUrls[0],
-          image_urls: imageUrls, // Send all URLs for multi-image processing
-        }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || "Backend processing failed");
-      }
-
-      const result = await response.json();
+      const result = await fetchJsonWithRetry<any>(
+        `${API_URL}/api/process-receipt/`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            expense_id: expenseId,
+            image_url: imageUrls[0],
+            image_urls: imageUrls, // Send all URLs for multi-image processing
+          }),
+        }
+      );
       console.log("✅ Backend processing complete:", result);
 
       // 3.5 Check for matching bank_import expense FIRST (reverse matching)
@@ -872,21 +869,17 @@ export const expensesApi = {
       console.log("🤖 Sending to backend for processing...");
       // Use centralized API URL from runtime-config
       const { API_URL } = await import("./runtime-config");
-      const response = await fetch(`${API_URL}/api/process-receipt/`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          expense_id: expenseId,
-          image_url: imageUrl,
-        }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || "Backend processing failed");
-      }
-
-      const result = await response.json();
+      const result = await fetchJsonWithRetry<any>(
+        `${API_URL}/api/process-receipt/`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            expense_id: expenseId,
+            image_url: imageUrl,
+          }),
+        }
+      );
       console.log("✅ Backend processing complete:", result);
 
       // 4. Update expense with parsed data (store date as ISO string to avoid timezone issues)
@@ -1098,21 +1091,19 @@ export const revenueApi = {
     console.log("🌐 Request payload:", { image_url: imageUrl });
 
     try {
-      const response = await fetch(url, {
+      const data = await fetchJsonWithRetry<{
+        broker_name: string | null;
+        load_id: string | null;
+        date: string | null;
+        amount_original: number | null;
+        currency: "USD" | "CAD";
+        raw_text: string | null;
+        confidence: number;
+      }>(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ image_url: imageUrl }),
       });
-
-      console.log("🌐 Response status:", response.status, response.statusText);
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error("🌐 Error response body:", errorText);
-        throw new Error(`Backend error: ${response.status} - ${errorText}`);
-      }
-
-      const data = await response.json();
       console.log("🌐 Response data:", data);
       return data;
     } catch (error: any) {
@@ -1419,6 +1410,7 @@ export interface BankTransaction {
   vendor_name: string;
   notes: string;
   confidence: number;
+  is_asset_candidate?: boolean;
   // UI state
   selected?: boolean;
 }
@@ -1443,18 +1435,14 @@ export const bankImportApi = {
     summary: BankImportSummary;
   }> => {
     const { API_URL } = await import("./runtime-config");
-    const response = await fetch(`${API_URL}/api/bank-import/parse`, {
+    return fetchJsonWithRetry<{
+      transactions: BankTransaction[];
+      summary: BankImportSummary;
+    }>(`${API_URL}/api/bank-import/parse`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ csv_content: csvContent }),
     });
-
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.detail || "Failed to parse bank CSV");
-    }
-
-    return response.json();
   },
 
   /**
@@ -2197,21 +2185,21 @@ export const factoringApi = {
     );
 
     const { API_URL } = await import("./runtime-config");
-    const response = await fetch(`${API_URL}/api/factoring/parse`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        pdf_base64: base64,
-        filename: file.name,
-      }),
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.detail || "Failed to parse factoring report");
-    }
-
-    return response.json();
+    const idempotencyKey = globalThis.crypto.randomUUID();
+    return fetchJsonWithRetry<FactoringReportData>(
+      `${API_URL}/api/factoring/parse`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": idempotencyKey,
+        },
+        body: JSON.stringify({
+          pdf_base64: base64,
+          filename: file.name,
+        }),
+      }
+    );
   },
 
   /**
@@ -2948,6 +2936,302 @@ export const exportApi = {
     }
 
     return { totals, by_category, by_payment_source, by_currency };
+  },
+};
+
+// ============ ASSETS (CCA / Capital Cost Allowance) ============
+
+const ASSETS_COLLECTION = "assets";
+
+import type {
+  Asset as CCAAsset,
+  AssetCategory as CCAAssetCategory,
+  AssetStatus as CCAAssetStatus,
+  UCCScheduleEntry,
+} from "./cca-engine";
+
+import {
+  getAdjustedCost,
+  generateUCCSchedule,
+  getCCAForYear,
+  getUCCBalance,
+  getTotalCCAForYear,
+  detectAssetCandidate,
+} from "./cca-engine";
+
+export type { CCAAsset, CCAAssetCategory, CCAAssetStatus, UCCScheduleEntry };
+
+export const assetsApi = {
+  /**
+   * Create a new asset
+   */
+  create: async (asset: Partial<CCAAsset>): Promise<string> => {
+    await ensureAuth();
+    const now = new Date();
+
+    // Calculate adjusted cost (apply class 10.1 ceiling etc.)
+    const adjustedCost = getAdjustedCost(
+      asset.purchase_cost || 0,
+      asset.cca_class || "class_10",
+    );
+
+    // Get purchase year
+    const purchaseDate =
+      asset.purchase_date instanceof Date
+        ? asset.purchase_date
+        : new Date(asset.purchase_date || now);
+    const purchaseYear = purchaseDate.getFullYear();
+
+    // Generate initial UCC schedule (purchase year to current year + 5)
+    const currentYear = new Date().getFullYear();
+    const toYear = Math.max(currentYear + 5, purchaseYear + 10);
+    const schedule = generateUCCSchedule(
+      asset.purchase_cost || 0,
+      asset.cca_class || "class_10",
+      purchaseYear,
+      toYear,
+    );
+
+    const docRef = await addDoc(collection(db, ASSETS_COLLECTION), {
+      name: asset.name || "",
+      description: asset.description || "",
+      cca_class: asset.cca_class || "class_10",
+      purchase_date: toISODateString(purchaseDate) || "",
+      purchase_cost: asset.purchase_cost || 0,
+      adjusted_cost: adjustedCost,
+      vendor_name: asset.vendor_name || "",
+      category: asset.category || "other",
+      status: asset.status || "active",
+      disposal_date: null,
+      disposal_proceeds: 0,
+      ucc_schedule: schedule,
+      linked_expense_id: asset.linked_expense_id || null,
+      linked_bank_fingerprint: asset.linked_bank_fingerprint || null,
+      receipt_image_url: asset.receipt_image_url || null,
+      notes: asset.notes || "",
+      created_at: Timestamp.fromDate(now),
+      updated_at: Timestamp.fromDate(now),
+    });
+
+    return docRef.id;
+  },
+
+  /**
+   * Get asset by ID
+   */
+  get: async (id: string): Promise<CCAAsset | null> => {
+    await ensureAuth();
+    const docRef = doc(db, ASSETS_COLLECTION, id);
+    const docSnap = await getDoc(docRef);
+
+    if (!docSnap.exists()) return null;
+
+    const data = docSnap.data();
+    return {
+      id: docSnap.id,
+      ...data,
+      purchase_date: data.purchase_date ? toDate(data.purchase_date) : new Date(),
+      disposal_date: data.disposal_date ? toDate(data.disposal_date) : null,
+      created_at: toDate(data.created_at),
+      updated_at: toDate(data.updated_at),
+    } as CCAAsset;
+  },
+
+  /**
+   * List all assets
+   */
+  list: async (): Promise<CCAAsset[]> => {
+    await ensureAuth();
+    const q = query(
+      collection(db, ASSETS_COLLECTION),
+      orderBy("created_at", "desc"),
+    );
+    const querySnapshot = await getDocs(q);
+    const assets: CCAAsset[] = [];
+
+    querySnapshot.forEach((docSnap) => {
+      const data = docSnap.data();
+      assets.push({
+        id: docSnap.id,
+        ...data,
+        purchase_date: data.purchase_date ? toDate(data.purchase_date) : new Date(),
+        disposal_date: data.disposal_date ? toDate(data.disposal_date) : null,
+        created_at: toDate(data.created_at),
+        updated_at: toDate(data.updated_at),
+      } as CCAAsset);
+    });
+
+    return assets;
+  },
+
+  /**
+   * Update an asset
+   */
+  update: async (id: string, data: Partial<CCAAsset>): Promise<void> => {
+    await ensureAuth();
+    const docRef = doc(db, ASSETS_COLLECTION, id);
+
+    const updateData: Record<string, any> = {
+      ...data,
+      updated_at: Timestamp.fromDate(new Date()),
+    };
+
+    // If purchase_cost or cca_class changed, recalculate schedule
+    if (data.purchase_cost !== undefined || data.cca_class !== undefined) {
+      const existing = await assetsApi.get(id);
+      if (existing) {
+        const cost = data.purchase_cost ?? existing.purchase_cost;
+        const classId = data.cca_class ?? existing.cca_class;
+        const purchaseDate =
+          (data.purchase_date || existing.purchase_date) instanceof Date
+            ? (data.purchase_date || existing.purchase_date) as Date
+            : new Date((data.purchase_date || existing.purchase_date) as string);
+        const purchaseYear = purchaseDate.getFullYear();
+        const currentYear = new Date().getFullYear();
+        const toYear = Math.max(currentYear + 5, purchaseYear + 10);
+
+        updateData.adjusted_cost = getAdjustedCost(cost, classId);
+        updateData.ucc_schedule = generateUCCSchedule(cost, classId, purchaseYear, toYear);
+      }
+    }
+
+    await updateDoc(docRef, updateData);
+  },
+
+  /**
+   * Delete an asset
+   */
+  delete: async (id: string): Promise<void> => {
+    await ensureAuth();
+    const docRef = doc(db, ASSETS_COLLECTION, id);
+    await deleteDoc(docRef);
+  },
+
+  /**
+   * Convert an existing expense to an asset.
+   * - Creates new asset document with CCA class
+   * - Marks original expense as reclassified
+   * - Preserves audit trail
+   */
+  convertFromExpense: async (
+    expenseId: string,
+    ccaClass: string,
+    assetName: string,
+    assetCategory: CCAAssetCategory,
+  ): Promise<string> => {
+    await ensureAuth();
+
+    // 1. Fetch the expense
+    const expense = await expensesApi.get(expenseId);
+    if (!expense) throw new Error("Expense not found");
+
+    const purchaseCost = expense.cad_amount || expense.original_amount || 0;
+    const purchaseDate = expense.transaction_date || new Date();
+
+    // 2. Create asset record
+    const assetId = await assetsApi.create({
+      name: assetName,
+      description: `Converted from expense: ${expense.vendor_name} — $${purchaseCost.toLocaleString()}`,
+      cca_class: ccaClass,
+      purchase_date: purchaseDate,
+      purchase_cost: purchaseCost,
+      vendor_name: expense.vendor_name || "",
+      category: assetCategory,
+      status: "active",
+      linked_expense_id: expenseId,
+      linked_bank_fingerprint: expense.import_fingerprint || null,
+      receipt_image_url: expense.receipt_image_url || null,
+      notes: `Reclassified from expense on ${new Date().toISOString().split("T")[0]}. Original category: ${expense.category}`,
+    });
+
+    // 3. Mark expense as reclassified (keep it for audit trail)
+    await expensesApi.update(expenseId, {
+      category: "uncategorized",
+      notes: `[RECLASSIFIED TO ASSET] Asset ID: ${assetId}. Original amount: $${purchaseCost.toLocaleString()}. This expense has been reclassified as a depreciable asset for CRA compliance.${expense.notes ? ` | Original notes: ${expense.notes}` : ""}`,
+      is_verified: true,
+    } as any);
+
+    return assetId;
+  },
+
+  /**
+   * Get CCA report for a fiscal year
+   */
+  getCCAReport: async (
+    fiscalYear: number,
+  ): Promise<{
+    assets: Array<CCAAsset & { ccaForYear: number; uccBalance: number }>;
+    totalCCA: number;
+    totalAssetValue: number;
+    totalUCC: number;
+  }> => {
+    const assets = await assetsApi.list();
+    const activeAssets = assets.filter((a) => a.status === "active");
+
+    const assetsWithCCA = activeAssets.map((asset) => ({
+      ...asset,
+      ccaForYear: getCCAForYear(asset, fiscalYear),
+      uccBalance: getUCCBalance(asset, fiscalYear),
+    }));
+
+    const totalCCA = assetsWithCCA.reduce((sum, a) => sum + a.ccaForYear, 0);
+    const totalAssetValue = assetsWithCCA.reduce(
+      (sum, a) => sum + a.purchase_cost,
+      0,
+    );
+    const totalUCC = assetsWithCCA.reduce((sum, a) => sum + a.uccBalance, 0);
+
+    return {
+      assets: assetsWithCCA,
+      totalCCA: Math.round(totalCCA * 100) / 100,
+      totalAssetValue: Math.round(totalAssetValue * 100) / 100,
+      totalUCC: Math.round(totalUCC * 100) / 100,
+    };
+  },
+
+  /**
+   * Scan existing expenses for potential asset candidates
+   */
+  scanForAssetCandidates: async (): Promise<
+    Array<{
+      expense: Expense;
+      reason: string;
+      suggestedClasses: string[];
+      suggestedCategory: CCAAssetCategory;
+    }>
+  > => {
+    await ensureAuth();
+    const allExpResult = await expensesApi.list({ per_page: 2000 });
+    const candidates: Array<{
+      expense: Expense;
+      reason: string;
+      suggestedClasses: string[];
+      suggestedCategory: CCAAssetCategory;
+    }> = [];
+
+    for (const expense of allExpResult.expenses) {
+      // Skip already reclassified expenses
+      if (expense.notes?.includes("[RECLASSIFIED TO ASSET]")) continue;
+
+      const amount = expense.cad_amount || expense.original_amount || 0;
+      const result = detectAssetCandidate(
+        amount,
+        expense.vendor_name || "",
+        expense.category,
+        expense.notes || "",
+      );
+
+      if (result && result.isAssetCandidate) {
+        candidates.push({
+          expense,
+          reason: result.reason,
+          suggestedClasses: result.suggestedClasses,
+          suggestedCategory: result.suggestedCategory,
+        });
+      }
+    }
+
+    return candidates;
   },
 };
 

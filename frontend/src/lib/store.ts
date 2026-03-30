@@ -100,3 +100,24 @@ export const categoryColors: Record<string, string> = {
   uncategorized: "#6B7280",
 };
 
+// Asset category display names (CCA)
+export const assetCategoryLabels: Record<string, string> = {
+  vehicle: "Vehicle",
+  trailer: "Trailer",
+  equipment: "Equipment",
+  furniture: "Furniture & Fixtures",
+  computer: "Computer Hardware",
+  building: "Building",
+  other: "Other",
+};
+
+// Asset category colors
+export const assetCategoryColors: Record<string, string> = {
+  vehicle: "#3B82F6",
+  trailer: "#F59E0B",
+  equipment: "#10B981",
+  furniture: "#8B5CF6",
+  computer: "#06B6D4",
+  building: "#F97316",
+  other: "#6B7280",
+};

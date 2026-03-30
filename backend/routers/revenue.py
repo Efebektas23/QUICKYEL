@@ -6,9 +6,9 @@ from typing import Optional
 import logging
 import httpx
 import json
-import google.generativeai as genai
 
 from config import settings
+from services.resilient_ai import ResilientModelFactory, map_gemini_exception_to_http
 from services.ocr_service import ocr_service
 
 router = APIRouter()
@@ -89,7 +89,7 @@ RESPOND WITH ONLY THIS JSON (no markdown, no explanation):
 
 
 class RateConfirmationParser:
-    """Service for parsing Rate Confirmation documents using Gemini."""
+    """Service for parsing Rate Confirmation documents using Gemini (retry + fallback)."""
     
     def __init__(self):
         try:
@@ -97,24 +97,24 @@ class RateConfirmationParser:
             if not api_key:
                 logger.warning("No Gemini API key found. AI parsing disabled.")
                 self.model = None
+                self.model_factory = None
                 return
             
-            genai.configure(api_key=api_key)
-            
-            self.model = genai.GenerativeModel(
-                model_name="gemini-2.0-flash",
-                generation_config={
+            self.model_factory = ResilientModelFactory(
+                api_key=api_key,
+                primary_config={
                     "temperature": 0.1,
                     "top_p": 0.95,
                     "max_output_tokens": 1024,
-                }
+                },
             )
-            
-            logger.info("Rate Confirmation parser initialized")
+            self.model = self.model_factory.primary_model
+            logger.info("Rate Confirmation parser initialized with resilient AI wrapper")
             
         except Exception as e:
             logger.error(f"Failed to initialize Rate Confirmation parser: {str(e)}")
             self.model = None
+            self.model_factory = None
     
     def _parse_gemini_response(self, content: str) -> dict:
         """Parse Gemini response JSON, cleaning markdown if present."""
@@ -144,7 +144,7 @@ class RateConfirmationParser:
     async def parse_from_text(self, ocr_text: str) -> dict:
         """Parse OCR text from Rate Confirmation into structured data."""
         
-        if self.model is None:
+        if self.model is None or self.model_factory is None or not self.model_factory.is_available:
             logger.warning("Gemini model not available, returning empty parsed data")
             return self._empty_result()
         
@@ -158,7 +158,10 @@ RATE CONFIRMATION TEXT:
 
 EXTRACT AND RETURN JSON:"""
 
-            response = self.model.generate_content(prompt)
+            response = self.model_factory.generate(
+                prompt=prompt,
+                operation_name="rate_confirmation_text",
+            )
             
             content = response.text.strip()
             logger.info(f"Gemini response for Rate Confirmation (text): {content[:500]}...")
@@ -171,12 +174,18 @@ EXTRACT AND RETURN JSON:"""
             
         except Exception as e:
             logger.error(f"Rate Confirmation text parsing failed: {str(e)}")
-            raise
+            if getattr(e, "ai_suggested_http_status", None) == 503:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="AI is recovering from recent errors. Please wait and try again.",
+                ) from e
+            status, detail = map_gemini_exception_to_http(e)
+            raise HTTPException(status_code=status, detail=detail) from e
     
     async def parse_from_pdf(self, pdf_content: bytes) -> dict:
         """Parse PDF directly using Gemini's multimodal capabilities."""
         
-        if self.model is None:
+        if self.model is None or self.model_factory is None or not self.model_factory.is_available:
             logger.warning("Gemini model not available, returning empty parsed data")
             return self._empty_result()
         
@@ -194,8 +203,10 @@ EXTRACT AND RETURN JSON:"""
 
 {RATE_CONFIRMATION_PROMPT}"""
 
-            # Send to Gemini with the PDF
-            response = self.model.generate_content([prompt, pdf_part])
+            response = self.model_factory.generate(
+                prompt=[prompt, pdf_part],
+                operation_name="rate_confirmation_pdf",
+            )
             
             content = response.text.strip()
             logger.info(f"Gemini response for Rate Confirmation (PDF): {content[:500]}...")
@@ -208,12 +219,18 @@ EXTRACT AND RETURN JSON:"""
             
         except Exception as e:
             logger.error(f"Rate Confirmation PDF parsing failed: {str(e)}")
-            raise
+            if getattr(e, "ai_suggested_http_status", None) == 503:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="AI is recovering from recent errors. Please wait and try again.",
+                ) from e
+            status, detail = map_gemini_exception_to_http(e)
+            raise HTTPException(status_code=status, detail=detail) from e
     
     async def parse_from_image(self, image_content: bytes, mime_type: str = "image/jpeg") -> dict:
         """Parse image directly using Gemini's vision capabilities."""
         
-        if self.model is None:
+        if self.model is None or self.model_factory is None or not self.model_factory.is_available:
             logger.warning("Gemini model not available, returning empty parsed data")
             return self._empty_result()
         
@@ -228,8 +245,10 @@ EXTRACT AND RETURN JSON:"""
 
 {RATE_CONFIRMATION_PROMPT}"""
 
-            # Send to Gemini with the image
-            response = self.model.generate_content([prompt, image_part])
+            response = self.model_factory.generate(
+                prompt=[prompt, image_part],
+                operation_name="rate_confirmation_image",
+            )
             
             content = response.text.strip()
             logger.info(f"Gemini response for Rate Confirmation (image): {content[:500]}...")
@@ -242,7 +261,13 @@ EXTRACT AND RETURN JSON:"""
             
         except Exception as e:
             logger.error(f"Rate Confirmation image parsing failed: {str(e)}")
-            raise
+            if getattr(e, "ai_suggested_http_status", None) == 503:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="AI is recovering from recent errors. Please wait and try again.",
+                ) from e
+            status, detail = map_gemini_exception_to_http(e)
+            raise HTTPException(status_code=status, detail=detail) from e
     
     def _empty_result(self) -> dict:
         """Return empty result structure."""

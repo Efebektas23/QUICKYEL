@@ -7,9 +7,9 @@ import logging
 import csv
 import io
 import json
-import google.generativeai as genai
 
 from config import settings
+from services.resilient_ai import ResilientModelFactory
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -100,6 +100,14 @@ TRANSACTION CLASSIFICATION RULES:
    - "bank_checking" for all direct debits, auto-payments, bill payments
    - "e_transfer" for e-Transfers
 
+5. ASSET DETECTION (CRITICAL for CRA compliance):
+   - Vehicle purchases (dealerships, auto sales) > $5,000 → set "is_asset_candidate": true
+   - Trailer purchases (dry van, reefer, flatbed) > $5,000 → set "is_asset_candidate": true
+   - Heavy equipment purchases > $10,000 → set "is_asset_candidate": true
+   - These are capital assets that must be DEPRECIATED, not expensed immediately
+   - Still categorize them normally, but add the flag and note "⚡ POTENTIAL ASSET - may need CCA classification"
+   - Common keywords: dealer, motors, auto, trailer, equipment, machinery, forklift
+
 RESPOND WITH ONLY a JSON array. Each element should have:
 {
   "index": number (0-based row index),
@@ -108,7 +116,8 @@ RESPOND WITH ONLY a JSON array. Each element should have:
   "payment_source": "bank_checking" | "e_transfer",
   "vendor_name": "cleaned up vendor/payee name",
   "notes": "brief note about what this transaction is",
-  "confidence": number 0.0-1.0
+  "confidence": number 0.0-1.0,
+  "is_asset_candidate": boolean (optional, true only for high-value asset purchases)
 }
 
 RESPOND WITH ONLY THE JSON ARRAY (no markdown, no explanation):"""
@@ -129,6 +138,7 @@ class BankTransaction(BaseModel):
     vendor_name: str = ""
     notes: str = ""
     confidence: float = 0.0
+    is_asset_candidate: bool = False
 
 
 class ParseBankCSVRequest(BaseModel):
@@ -143,7 +153,13 @@ class ParseBankCSVResponse(BaseModel):
 
 
 class BankCategorizationService:
-    """Service for parsing and categorizing bank transactions."""
+    """Service for parsing and categorizing bank transactions.
+    
+    Enhanced with resilient AI wrapper:
+    - Exponential backoff retry (503/429/500)
+    - Model fallback (gemini-2.0-flash → gemini-1.5-flash)
+    - Circuit breaker (prevents cascade failures)
+    """
     
     def __init__(self):
         try:
@@ -151,21 +167,26 @@ class BankCategorizationService:
             if not api_key:
                 logger.warning("No Gemini API key found. AI categorization disabled.")
                 self.model = None
+                self.model_factory = None
                 return
             
-            genai.configure(api_key=api_key)
-            self.model = genai.GenerativeModel(
-                model_name="gemini-2.0-flash",
-                generation_config={
+            # Initialize resilient model factory (retry + fallback + circuit breaker)
+            self.model_factory = ResilientModelFactory(
+                api_key=api_key,
+                primary_config={
                     "temperature": 0.1,
                     "top_p": 0.95,
                     "max_output_tokens": 8192,
                 }
             )
-            logger.info("Bank categorization service initialized")
+            
+            # Keep self.model for backward compatibility checks
+            self.model = self.model_factory.primary_model
+            logger.info("Bank categorization service initialized with resilient AI wrapper")
         except Exception as e:
             logger.error(f"Failed to initialize bank categorization service: {str(e)}")
             self.model = None
+            self.model_factory = None
     
     def parse_csv(self, csv_content: str) -> List[dict]:
         """Parse RBC CSV into structured transactions."""
@@ -238,7 +259,12 @@ BANK TRANSACTIONS TO CATEGORIZE:
 CATEGORIZE ALL {len(transactions)} TRANSACTIONS AND RETURN JSON ARRAY:"""
 
             logger.info(f"Sending {len(transactions)} transactions to Gemini for categorization")
-            response = self.model.generate_content(prompt)
+            
+            # Use resilient generate with retry + fallback + circuit breaker
+            response = self.model_factory.generate(
+                prompt=prompt,
+                operation_name="bank_categorization",
+            )
             
             content = response.text.strip()
             logger.info(f"Gemini categorization response: {content[:500]}...")
@@ -265,6 +291,7 @@ CATEGORIZE ALL {len(transactions)} TRANSACTIONS AND RETURN JSON ARRAY:"""
                 tx["vendor_name"] = ai_data.get("vendor_name", tx["description1"])
                 tx["notes"] = ai_data.get("notes", "")
                 tx["confidence"] = ai_data.get("confidence", 0.5)
+                tx["is_asset_candidate"] = ai_data.get("is_asset_candidate", False)
             
             # Post-AI validation: override AI decisions for obvious patterns
             transactions = self._post_ai_validation(transactions)
