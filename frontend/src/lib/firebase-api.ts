@@ -22,6 +22,7 @@ import {
   deleteObject,
 } from "firebase/storage";
 import * as XLSX from "xlsx";
+import JSZip from "jszip";
 import { fetchJsonWithRetry } from "./fetch-with-retry";
 import {
   getTotalCCAForYear,
@@ -2938,9 +2939,149 @@ const categoryDisplayNames: Record<string, string> = {
   uncategorized: "Uncategorized",
 };
 
+/** One operating-style CSV row (same columns as main Expenses section). */
+function expenseToOperatingCsvRow(expense: Expense): string[] {
+  const paymentSource =
+    expense.payment_source === "personal_card"
+      ? "Personal Card"
+      : expense.payment_source === "company_card"
+        ? "Company Card"
+        : expense.payment_source === "bank_checking"
+          ? "Bank / Checking"
+          : expense.payment_source === "e_transfer"
+            ? "e-Transfer"
+            : "Unknown";
+  const dueToShareholder = expense.payment_source === "personal_card" ? "Yes" : "No";
+  const jurisdiction =
+    expense.jurisdiction === "canada"
+      ? "CANADA"
+      : expense.jurisdiction === "usa"
+        ? "USA"
+        : "UNKNOWN";
+  const netCad = getNetExpenseCad(expense);
+  const itcCad = getEffectiveRecoverableItcCad(expense);
+  const itcSource = getItcSourceLabel(expense);
+
+  let notes = expense.notes || "";
+  if (expense.category === "meals_entertainment") {
+    notes = `50% deductible for CRA. ${notes}`.trim();
+  }
+
+  return [
+    formatExportDate(expense.transaction_date),
+    expense.vendor_name || "",
+    categoryDisplayNames[expense.category] || expense.category,
+    expense.original_currency,
+    expense.original_amount?.toFixed(2) || "",
+    expense.exchange_rate !== 1.0 ? expense.exchange_rate.toFixed(4) : "N/A (CAD)",
+    expense.cad_amount?.toFixed(2) || "",
+    netCad.toFixed(2),
+    itcCad.toFixed(2),
+    itcSource,
+    paymentSource,
+    dueToShareholder,
+    jurisdiction,
+    expense.receipt_image_url || "",
+    notes,
+  ];
+}
+
+/** One expense row for XLSX Expenses / Assets sheets (identical column set). */
+function buildExpenseExcelExportRow(expense: Expense): Record<string, string | number> {
+  const category = expense.category || "uncategorized";
+  const deductionRate = DEDUCTION_RATES[category] ?? 0.0;
+  const deductibleAmount = (expense.cad_amount || 0) * deductionRate;
+
+  const gstAmount = expense.gst_amount || 0;
+  const hstAmount = expense.hst_amount || 0;
+  const pstAmount = expense.pst_amount || 0;
+
+  const effectiveHst =
+    gstAmount === 0 && hstAmount === 0 && expense.tax_amount
+      ? expense.tax_amount
+      : hstAmount;
+  const totalTax = gstAmount + effectiveHst + pstAmount;
+
+  const taxRecoverableEffective = getEffectiveRecoverableItcCad(expense);
+  const netExpenseCad = getNetExpenseCad(expense);
+  const itcSource = getItcSourceLabel(expense);
+
+  const paymentSource =
+    expense.payment_source === "company_card"
+      ? "Company Card"
+      : expense.payment_source === "personal_card"
+        ? "Personal Card"
+        : expense.payment_source === "bank_checking"
+          ? "Bank / Checking"
+          : expense.payment_source === "e_transfer"
+            ? "e-Transfer"
+            : "Unknown";
+  const dueToShareholder =
+    expense.payment_source === "personal_card" ? expense.cad_amount || 0 : 0;
+
+  const cur = (expense.original_currency || expense.currency || "CAD").toUpperCase();
+  const jurisdiction = cur === "USD" || expense.jurisdiction === "usa" ? "USA" : "Canada";
+
+  const notes =
+    deductionRate < 1.0 ? `${(deductionRate * 100).toFixed(0)}% deductible` : "";
+
+  return {
+    Date: formatExportDate(expense.transaction_date),
+    Vendor: expense.vendor_name || "",
+    Category: category.replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase()),
+    "Original Amount": expense.original_amount || expense.cad_amount || 0,
+    Currency: expense.currency || expense.original_currency || "CAD",
+    "Exchange Rate":
+      expense.exchange_rate !== 1.0 ? expense.exchange_rate?.toFixed(4) ?? "N/A" : "N/A",
+    "CAD Amount": expense.cad_amount || 0,
+    "Net Expense (CAD)": netExpenseCad,
+    "GST (5%)": gstAmount,
+    "HST (13-15%)": effectiveHst,
+    "PST (6-10%)": pstAmount,
+    "Total Tax": totalTax,
+    "Tax Recoverable (ITC)": taxRecoverableEffective,
+    "ITC Source": itcSource,
+    "Deductible Amount": Math.round(deductibleAmount * 100) / 100,
+    "Deduction Rate": `${(deductionRate * 100).toFixed(0)}%`,
+    "Card Last 4": expense.card_last_4 || "",
+    "Payment Source": paymentSource,
+    "Due to Shareholder": dueToShareholder,
+    Jurisdiction: jurisdiction,
+    "Receipt URL": expense.receipt_image_url || "",
+    Notes: notes,
+  };
+}
+
+function emptyExpenseExcelPlaceholder(vendorNote: string): Record<string, string | number> {
+  return {
+    Date: "",
+    Vendor: vendorNote,
+    Category: "",
+    "Original Amount": 0,
+    Currency: "",
+    "Exchange Rate": "",
+    "CAD Amount": 0,
+    "Net Expense (CAD)": 0,
+    "GST (5%)": 0,
+    "HST (13-15%)": 0,
+    "PST (6-10%)": 0,
+    "Total Tax": 0,
+    "Tax Recoverable (ITC)": 0,
+    "ITC Source": "",
+    "Deductible Amount": 0,
+    "Deduction Rate": "",
+    "Card Last 4": "",
+    "Payment Source": "",
+    "Due to Shareholder": 0,
+    Jurisdiction: "",
+    "Receipt URL": "",
+    Notes: "",
+  };
+}
+
 export const exportApi = {
   /**
-   * Generate and download expenses as CSV (client-side)
+   * ZIP bundle: main operating report CSV + Assets.csv (reclassified-to-asset only).
    */
   downloadCSV: async (params?: {
     start_date?: string;
@@ -2967,6 +3108,7 @@ export const exportApi = {
     const operatingExpenses = expenses.filter((e) => !isExpenseReclassifiedToAsset(e));
     const reclassifiedAssetCount = expenses.length - operatingExpenses.length;
     const plExpenses = operatingExpenses.filter((e) => !isExcludedFromBusinessPl(e));
+    const assetExpenses = expenses.filter((e) => isExpenseReclassifiedToAsset(e));
 
     // CSV Header (aligns with dashboard net-of-ITC logic)
     const headers = [
@@ -2987,42 +3129,7 @@ export const exportApi = {
       "Notes"
     ];
 
-    // CSV Rows (operating P&L only — excludes Personel and reclassified-to-asset)
-    const rows = plExpenses.map(expense => {
-      const paymentSource = expense.payment_source === "personal_card" ? "Personal Card" :
-        expense.payment_source === "company_card" ? "Company Card" :
-          expense.payment_source === "bank_checking" ? "Bank / Checking" :
-            expense.payment_source === "e_transfer" ? "e-Transfer" : "Unknown";
-      const dueToShareholder = expense.payment_source === "personal_card" ? "Yes" : "No";
-      const jurisdiction = expense.jurisdiction === "canada" ? "CANADA" :
-        expense.jurisdiction === "usa" ? "USA" : "UNKNOWN";
-      const netCad = getNetExpenseCad(expense);
-      const itcCad = getEffectiveRecoverableItcCad(expense);
-      const itcSource = getItcSourceLabel(expense);
-
-      let notes = expense.notes || "";
-      if (expense.category === "meals_entertainment") {
-        notes = `50% deductible for CRA. ${notes}`.trim();
-      }
-
-      return [
-        formatExportDate(expense.transaction_date),
-        expense.vendor_name || "",
-        categoryDisplayNames[expense.category] || expense.category,
-        expense.original_currency,
-        expense.original_amount?.toFixed(2) || "",
-        expense.exchange_rate !== 1.0 ? expense.exchange_rate.toFixed(4) : "N/A (CAD)",
-        expense.cad_amount?.toFixed(2) || "",
-        netCad.toFixed(2),
-        itcCad.toFixed(2),
-        itcSource,
-        paymentSource,
-        dueToShareholder,
-        jurisdiction,
-        expense.receipt_image_url || "",
-        notes
-      ];
-    });
+    const rows = plExpenses.map((e) => expenseToOperatingCsvRow(e));
 
     // Build Expenses CSV content
     const expensesCsv = [
@@ -3106,14 +3213,28 @@ export const exportApi = {
       `"",""`,
       `"Expense rows in Expenses section (P&L operating only)","${plExpenses.length}"`,
       `"Reclassified to asset (excluded from Expenses section)","${reclassifiedAssetCount}"`,
+      `"Assets.csv rows in ZIP (capital purchases)","${assetExpenses.length}"`,
       `"Verified expense rows in period (before asset exclusion)","${expenses.length}"`,
       `"Revenue Count","${revenues.length}"`
     ];
 
-    // Combine all sections
     const csvContent = [...expensesCsv, ...revenuesCsv, ...summaryCsv].join("\n");
 
-    return new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const assetCsvRows = assetExpenses.map((e) => expenseToOperatingCsvRow(e));
+    const assetsCsvContent = [
+      "=== ASSETS (CAPITAL — CCA / depreciation) ===",
+      headers.join(","),
+      ...assetCsvRows.map((row) =>
+        row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","),
+      ),
+    ].join("\n");
+
+    const dateStr = new Date().toISOString().split("T")[0];
+    const zip = new JSZip();
+    zip.file(`Operating_Report_${dateStr}.csv`, csvContent);
+    zip.file("Assets.csv", assetsCsvContent);
+    const blob = await zip.generateAsync({ type: "blob", compression: "DEFLATE" });
+    return blob;
   },
 
   /**
@@ -3152,75 +3273,33 @@ export const exportApi = {
     const operatingExpenses = expenses.filter((e) => !isExpenseReclassifiedToAsset(e));
     const reclassifiedAssetCount = expenses.length - operatingExpenses.length;
     const plExpenses = operatingExpenses.filter((e) => !isExcludedFromBusinessPl(e));
+    const assetExpenses = expenses.filter((e) => isExpenseReclassifiedToAsset(e));
 
-    // Prepare data for Excel with separate tax columns + net expense / ITC source (dashboard logic)
-    const excelData = plExpenses.map(expense => {
-      const category = expense.category || "uncategorized";
-      const deductionRate = DEDUCTION_RATES[category] ?? 0.0;
-      const deductibleAmount = (expense.cad_amount || 0) * deductionRate;
-
-      // Recorded tax components (receipt / manual line items)
-      const gstAmount = expense.gst_amount || 0;
-      const hstAmount = expense.hst_amount || 0;
-      const pstAmount = expense.pst_amount || 0;
-
-      const effectiveHst = (gstAmount === 0 && hstAmount === 0 && expense.tax_amount)
-        ? expense.tax_amount
-        : hstAmount;
-      const totalTax = gstAmount + effectiveHst + pstAmount;
-
-      const taxRecoverableEffective = getEffectiveRecoverableItcCad(expense);
-      const netExpenseCad = getNetExpenseCad(expense);
-      const itcSource = getItcSourceLabel(expense);
-
-      const paymentSource = expense.payment_source === "company_card" ? "Company Card"
-        : expense.payment_source === "personal_card" ? "Personal Card"
-          : expense.payment_source === "bank_checking" ? "Bank / Checking"
-            : expense.payment_source === "e_transfer" ? "e-Transfer"
-              : "Unknown";
-      const dueToShareholder = expense.payment_source === "personal_card"
-        ? expense.cad_amount || 0
-        : 0;
-
-      const cur = (expense.original_currency || expense.currency || "CAD").toUpperCase();
-      const jurisdiction = cur === "USD" || expense.jurisdiction === "usa" ? "USA" : "Canada";
-
-      const notes = deductionRate < 1.0
-        ? `${(deductionRate * 100).toFixed(0)}% deductible`
-        : "";
-
-      return {
-        "Date": formatExportDate(expense.transaction_date),
-        "Vendor": expense.vendor_name || "",
-        "Category": category.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase()),
-        "Original Amount": expense.original_amount || expense.cad_amount || 0,
-        "Currency": expense.currency || expense.original_currency || "CAD",
-        "Exchange Rate": expense.exchange_rate !== 1.0 ? expense.exchange_rate?.toFixed(4) : "N/A",
-        "CAD Amount": expense.cad_amount || 0,
-        "Net Expense (CAD)": netExpenseCad,
-        "GST (5%)": gstAmount,
-        "HST (13-15%)": effectiveHst,
-        "PST (6-10%)": pstAmount,
-        "Total Tax": totalTax,
-        "Tax Recoverable (ITC)": taxRecoverableEffective,
-        "ITC Source": itcSource,
-        "Deductible Amount": Math.round(deductibleAmount * 100) / 100,
-        "Deduction Rate": `${(deductionRate * 100).toFixed(0)}%`,
-        "Card Last 4": expense.card_last_4 || "",
-        "Payment Source": paymentSource,
-        "Due to Shareholder": dueToShareholder,
-        "Jurisdiction": jurisdiction,
-        "Receipt URL": expense.receipt_image_url || "",
-        "Notes": notes
-      };
-    });
+    const excelData = plExpenses.map((e) => buildExpenseExcelExportRow(e));
+    const assetExcelData = assetExpenses.map((e) => buildExpenseExcelExportRow(e));
 
     // Create workbook
     const workbook = XLSX.utils.book_new();
 
     // ===== EXPENSES SHEET =====
-    const expensesSheet = XLSX.utils.json_to_sheet(excelData);
+    const expensesSheet = XLSX.utils.json_to_sheet(
+      excelData.length
+        ? excelData
+        : [emptyExpenseExcelPlaceholder("(No operating expenses in this export period)")],
+    );
     XLSX.utils.book_append_sheet(workbook, expensesSheet, "Expenses");
+
+    // ===== ASSETS SHEET (reclassified — same columns as Expenses) =====
+    const assetsSheet = XLSX.utils.json_to_sheet(
+      assetExcelData.length
+        ? assetExcelData
+        : [
+            emptyExpenseExcelPlaceholder(
+              "(No reclassified-to-asset expenses in this export period)",
+            ),
+          ],
+    );
+    XLSX.utils.book_append_sheet(workbook, assetsSheet, "Assets");
 
     // Set column widths for expenses
     expensesSheet["!cols"] = [
@@ -3247,6 +3326,8 @@ export const exportApi = {
       { wch: 50 },  // Receipt URL
       { wch: 20 },  // Notes
     ];
+
+    assetsSheet["!cols"] = expensesSheet["!cols"];
 
     // ===== REVENUES SHEET =====
     const allRevenues = await revenueApi.list({ per_page: 1000 });
@@ -3340,6 +3421,7 @@ export const exportApi = {
       { "Metric": "", "Value": "" },
       { "Metric": "Expense rows in Expenses sheet (P&L operating only)", "Value": plExpenses.length.toString() },
       { "Metric": "Reclassified to asset (excluded)", "Value": reclassifiedAssetCount.toString() },
+      { "Metric": "Assets sheet rows (capital / CCA)", "Value": assetExcelData.length.toString() },
       { "Metric": "Verified rows in period (before asset exclusion)", "Value": expenses.length.toString() },
       { "Metric": "Revenue rows", "Value": revenues.length.toString() },
     ];

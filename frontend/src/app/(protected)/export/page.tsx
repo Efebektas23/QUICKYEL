@@ -34,14 +34,22 @@ export default function ExportPage() {
   const handleExport = async (format: "csv" | "xlsx") => {
     setIsExporting(format);
     try {
+      const dateStamp = new Date().toISOString().split("T")[0];
       const blob =
         format === "csv"
           ? await exportApi.downloadCSV({ ...dateRange, verified_only: true })
           : await exportApi.downloadXLSX({ ...dateRange, verified_only: true });
 
-      const filename = `expenses_${new Date().toISOString().split("T")[0]}.${format}`;
+      const filename =
+        format === "csv"
+          ? `quickyel_export_${dateStamp}.zip`
+          : `expenses_${dateStamp}.xlsx`;
       downloadBlob(blob, filename);
-      toast.success(`Exported to ${format.toUpperCase()}`);
+      toast.success(
+        format === "csv"
+          ? "Exported ZIP (operating report + Assets.csv)"
+          : "Exported Excel (Expenses, Assets, Revenues, Summary)",
+      );
     } catch (error: any) {
       toast.error(error.response?.data?.detail || "Export failed");
     } finally {
@@ -408,9 +416,10 @@ export default function ExportPage() {
           Download Report
         </h2>
         <p className="text-slate-400 mb-6">
-          Export verified operating expenses with full details (exchange rates, CAD amounts,
-          receipt links). Rows reclassified to Assets / CCA are excluded here — use the CCA
-          schedule export for capital assets.
+          CSV downloads as a ZIP: operating P&amp;L (same columns as before) plus{" "}
+          <span className="text-slate-300">Assets.csv</span> for purchases reclassified to capital
+          assets (CCA / ITC detail). Excel includes matching <span className="text-slate-300">Assets</span>{" "}
+          sheet. Use the CCA schedule export below for depreciation schedules.
         </p>
         <div className="flex flex-col sm:flex-row gap-4">
           <button
@@ -423,7 +432,7 @@ export default function ExportPage() {
             ) : (
               <FileText className="w-5 h-5" />
             )}
-            Download CSV
+            Download CSV (ZIP)
           </button>
           <button
             onClick={() => handleExport("xlsx")}
