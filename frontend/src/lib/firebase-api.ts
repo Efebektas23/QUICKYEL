@@ -300,6 +300,41 @@ async function computeReceiptHash(file: File): Promise<string> {
 
 // ============ EXPENSES ============
 
+/**
+ * RBC USD: Business PAD + TCH lines are RXO fuel but were often saved as rent_lease.
+ * CAD TCH Canada lease (no USD marker) must stay rent_lease.
+ */
+export function expenseMatchesRbcUsdPadTchFuelPattern(e: {
+  category?: string;
+  notes?: string | null;
+  bank_description?: string | null;
+  vendor_name?: string | null;
+  original_currency?: string | null;
+  entry_type?: string;
+}): boolean {
+  if ((e.category || "") !== "rent_lease") return false;
+  const notes = (e.notes || "").toLowerCase();
+  const bank = (e.bank_description || "").toLowerCase();
+  const vendor = (e.vendor_name || "").toLowerCase();
+  const text = `${notes} ${bank} ${vendor}`;
+  if (!text.includes("business pad") || !text.includes("tch")) return false;
+
+  const isBankImport =
+    (e.entry_type || "") === "bank_import" || notes.includes("[bank import]");
+  if (!isBankImport) return false;
+
+  const oc = (e.original_currency || "").toUpperCase();
+  const rawNotes = e.notes || "";
+  const rawBank = e.bank_description || "";
+  const usdMarker =
+    oc === "USD" ||
+    /\(\s*usd\b/i.test(rawNotes) ||
+    /\(\s*usd\b/i.test(rawBank) ||
+    /\busd\s+[0-9]/i.test(rawNotes) ||
+    /\busd\s+[0-9]/i.test(rawBank);
+  return usdMarker;
+}
+
 export const expensesApi = {
   /**
    * Create a new expense
@@ -524,6 +559,69 @@ export const expensesApi = {
       }
       await batch.commit();
     }
+  },
+
+  /**
+   * One-time / on-demand repair: move misclassified RBC USD Business PAD+TCH from rent_lease → fuel (RXO).
+   * Safe for CAD-only TCH lease rows (no USD marker).
+   */
+  reclassifyRbcUsdPadTchFuelFromRentLease: async (): Promise<{
+    scanned: number;
+    updated: number;
+    ids: string[];
+  }> => {
+    await ensureAuth();
+    const q = query(
+      collection(db, EXPENSES_COLLECTION),
+      where("category", "==", "rent_lease"),
+      limit(5000)
+    );
+    const snap = await getDocs(q);
+    const tag = " | [Reclassified: Fuel/RXO — RBC USD Business PAD+TCH]";
+    const toUpdate: { id: string; notes: string }[] = [];
+
+    snap.forEach((docSnap) => {
+      const data = docSnap.data();
+      if (
+        !expenseMatchesRbcUsdPadTchFuelPattern({
+          category: "rent_lease",
+          notes: data.notes ?? null,
+          bank_description: data.bank_description ?? null,
+          vendor_name: data.vendor_name ?? null,
+          original_currency: data.original_currency ?? null,
+          entry_type: data.entry_type,
+        })
+      ) {
+        return;
+      }
+      const oldNotes = (data.notes as string) || "";
+      const notes = oldNotes.includes("[Reclassified: Fuel/RXO")
+        ? oldNotes
+        : oldNotes + tag;
+      toUpdate.push({ id: docSnap.id, notes });
+    });
+
+    const now = new Date();
+    const CHUNK = 400;
+    for (let i = 0; i < toUpdate.length; i += CHUNK) {
+      const slice = toUpdate.slice(i, i + CHUNK);
+      const batch = writeBatch(db);
+      for (const u of slice) {
+        batch.update(doc(db, EXPENSES_COLLECTION, u.id), {
+          category: "fuel",
+          vendor_name: "RXO",
+          notes: u.notes,
+          updated_at: Timestamp.fromDate(now),
+        });
+      }
+      await batch.commit();
+    }
+
+    return {
+      scanned: snap.size,
+      updated: toUpdate.length,
+      ids: toUpdate.map((x) => x.id),
+    };
   },
 
   /**
