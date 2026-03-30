@@ -7,6 +7,8 @@ import logging
 import csv
 import io
 import json
+import re
+from datetime import datetime
 
 from config import settings
 from services.resilient_ai import ResilientModelFactory
@@ -42,6 +44,51 @@ def _is_rbc_usd_business_pad_tch_expense(tx: dict) -> bool:
     )
 
 
+def _normalize_csv_headers(header_row: List[str]) -> List[str]:
+    return [(c or "").strip().replace("\ufeff", "").strip('"') for c in header_row]
+
+
+def _header_map(headers: List[str]) -> dict:
+    return {h.lower(): i for i, h in enumerate(headers)}
+
+
+def _parse_bank_statement_date_to_mdy(raw: str) -> str:
+    """Normalize to M/D/YYYY for downstream (matches RBC Canada CSV; frontend also accepts ISO)."""
+    s = (raw or "").strip()
+    if not s:
+        return ""
+    if len(s) >= 10 and s[4] == "-" and s[7] == "-":
+        try:
+            d = datetime.strptime(s[:10], "%Y-%m-%d")
+            return f"{d.month}/{d.day}/{d.year}"
+        except ValueError:
+            pass
+    m = re.match(r"^(\d{1,2})/(\d{1,2})/(\d{4})$", s)
+    if m:
+        return f"{int(m.group(1))}/{int(m.group(2))}/{m.group(3)}"
+    return s
+
+
+def _parse_amount_cell(cell: str) -> Optional[float]:
+    if cell is None or not str(cell).strip():
+        return None
+    t = str(cell).strip().replace(",", "")
+    try:
+        return float(t)
+    except ValueError:
+        return None
+
+
+def _suggested_vendor_from_merchant_line(description1: str) -> str:
+    """Card statement merchant line → display vendor (fallback when AI omits vendor_name)."""
+    d = (description1 or "").strip()
+    if not d:
+        return ""
+    if d.lower().startswith("www."):
+        d = d[4:].strip()
+    return d[:120]
+
+
 def _is_credit_card_payment_thank_you(desc1: str) -> bool:
     """Card statement credit from paying the balance — not business income."""
     d = (desc1 or "").lower()
@@ -58,6 +105,7 @@ def _is_credit_card_payment_thank_you(desc1: str) -> bool:
 BANK_CATEGORIZATION_PROMPT = """You are an expert Canadian accountant for a trucking/logistics company (BACKTAS GLOBAL LOGISTICS ULC).
 You need to categorize bank transactions from RBC business accounts: **chequing** (CAD/USD) and **credit card** exports.
 The row may have **CAD$ only**, **USD$ only** (native US card or USD chequing), or both — use the non-empty amount column(s).
+**RBC US wide export:** the **Description** column is the card merchant / payee name — set **vendor_name** to that text (trimmed; drop a leading `www.` if present) unless the row is a transfer/payment-received line.
 
 COMPANY CONTEXT:
 - Trucking/logistics company operating in Canada and USA
@@ -225,37 +273,134 @@ class BankCategorizationService:
             self.model_factory = None
     
     def parse_csv(self, csv_content: str) -> List[dict]:
-        """Parse RBC CSV into structured transactions."""
-        transactions = []
+        """Parse RBC CSV into structured transactions.
+
+        Supports:
+        - **Classic RBC export** (chequing / CA card): Account Type, Account Number,
+          Transaction Date, Cheque Number, Description 1, Description 2, CAD$, USD$
+        - **RBC US card / multi-column export**: Customer Number, Account Currency,
+          Account Number, Account Type, Transaction Date, Transaction Posted Date,
+          Amount, Type, Description, FITID — merchant name is in **Description**;
+          signed **Amount** is USD or CAD per Account Currency.
+        """
+        transactions: List[dict] = []
         reader = csv.reader(io.StringIO(csv_content))
-        
-        # Skip header row
-        header = next(reader, None)
-        if not header:
+        header_raw = next(reader, None)
+        if not header_raw:
             return []
-        
-        # Expected columns: Account Type, Account Number, Transaction Date, 
-        # Cheque Number, Description 1, Description 2, CAD$, USD$
+
+        header = _normalize_csv_headers(header_raw)
+        col = _header_map(header)
+
+        def _is_rbc_us_multi_export() -> bool:
+            keys = set(col.keys())
+            return (
+                "description" in keys
+                and "amount" in keys
+                and ("customer number" in keys or "account currency" in keys)
+            )
+
+        if _is_rbc_us_multi_export():
+            logger.info("Bank CSV format: RBC US / wide export (Description + Amount columns)")
+            need = ["transaction date", "description", "amount", "account currency"]
+            if not all(k in col for k in need):
+                logger.warning("RBC US export missing columns: %s", need)
+                return []
+
+            i_date = col["transaction date"]
+            i_desc = col["description"]
+            i_amt = col["amount"]
+            i_curr = col["account currency"]
+            i_type = col.get("type")
+            i_fitid = col.get("fitid")
+            i_posted = col.get("transaction posted date")
+            i_acct_type = col.get("account type")
+            i_acct_num = col.get("account number")
+            i_cust = col.get("customer number")
+
+            idx_need = [i_date, i_desc, i_amt, i_curr]
+            for opt in (i_type, i_fitid, i_posted, i_acct_type, i_acct_num, i_cust):
+                if opt is not None:
+                    idx_need.append(opt)
+            max_col = max(idx_need)
+
+            for row in reader:
+                if len(row) <= max_col:
+                    continue
+
+                desc = (row[i_desc] or "").strip()
+                if not desc:
+                    continue
+
+                amt = _parse_amount_cell(row[i_amt])
+                if amt is None:
+                    continue
+
+                date_mdy = _parse_bank_statement_date_to_mdy(row[i_date] or "")
+                if not date_mdy or not re.match(r"^\d{1,2}/\d{1,2}/\d{4}$", date_mdy):
+                    continue
+
+                curr = (row[i_curr] or "").strip().upper() or "USD"
+                cad_amount: Optional[float] = None
+                usd_amount: Optional[float] = None
+                if curr == "USD":
+                    usd_amount = amt
+                elif curr == "CAD":
+                    cad_amount = amt
+                else:
+                    usd_amount = amt
+
+                parts2: List[str] = []
+                if i_cust is not None and len(row) > i_cust and (row[i_cust] or "").strip():
+                    parts2.append(f"Customer {(row[i_cust] or '').strip()}")
+                if i_type is not None and len(row) > i_type and (row[i_type] or "").strip():
+                    parts2.append(f"Type: {(row[i_type] or '').strip()}")
+                if i_fitid is not None and len(row) > i_fitid and (row[i_fitid] or "").strip():
+                    parts2.append(f"FITID {(row[i_fitid] or '').strip()}")
+                if i_posted is not None and len(row) > i_posted and (row[i_posted] or "").strip():
+                    parts2.append(f"Posted: {(row[i_posted] or '').strip()}")
+                description2 = " | ".join(parts2)
+
+                acct_type = (row[i_acct_type] or "").strip() if i_acct_type is not None and len(row) > i_acct_type else ""
+                acct_num = (row[i_acct_num] or "").strip() if i_acct_num is not None and len(row) > i_acct_num else ""
+
+                transactions.append({
+                    "index": len(transactions),
+                    "account_type": acct_type or "CREDITCARD",
+                    "account_number": acct_num,
+                    "transaction_date": date_mdy,
+                    "cheque_number": "",
+                    "description1": desc,
+                    "description2": description2,
+                    "amount_cad": cad_amount,
+                    "amount_usd": usd_amount,
+                })
+
+            for i, tx in enumerate(transactions):
+                tx["index"] = i
+            return transactions
+
+        # Classic 8-column RBC layout
+        logger.info("Bank CSV format: classic RBC (Desc1/Desc2 + CAD$/USD$)")
         for idx, row in enumerate(reader):
             if len(row) < 7:
                 continue
-            
-            # Parse amounts (handle empty strings)
+
             cad_amount = None
             usd_amount = None
             try:
                 if row[6] and row[6].strip():
-                    cad_amount = float(row[6].strip())
+                    cad_amount = float(row[6].strip().replace(",", ""))
             except (ValueError, IndexError):
                 pass
             try:
                 if len(row) > 7 and row[7] and row[7].strip():
-                    usd_amount = float(row[7].strip())
+                    usd_amount = float(row[7].strip().replace(",", ""))
             except (ValueError, IndexError):
                 pass
-            
+
             transactions.append({
-                "index": idx,
+                "index": len(transactions),
                 "account_type": row[0].strip() if row[0] else "",
                 "account_number": row[1].strip() if row[1] else "",
                 "transaction_date": row[2].strip() if row[2] else "",
@@ -265,7 +410,9 @@ class BankCategorizationService:
                 "amount_cad": cad_amount,
                 "amount_usd": usd_amount,
             })
-        
+
+        for i, tx in enumerate(transactions):
+            tx["index"] = i
         return transactions
     
     async def categorize_transactions(self, transactions: List[dict]) -> List[dict]:
@@ -324,7 +471,13 @@ CATEGORIZE ALL {len(transactions)} TRANSACTIONS AND RETURN JSON ARRAY:"""
                 tx["type"] = ai_data.get("type", "expense")
                 tx["category"] = ai_data.get("category", "uncategorized")
                 tx["payment_source"] = ai_data.get("payment_source", "bank_checking")
-                tx["vendor_name"] = ai_data.get("vendor_name", tx["description1"])
+                vn_ai = (ai_data.get("vendor_name") or "").strip()
+                d1 = (tx.get("description1") or "").strip()
+                tx["vendor_name"] = (
+                    vn_ai
+                    or _suggested_vendor_from_merchant_line(d1)
+                    or d1
+                )
                 tx["notes"] = ai_data.get("notes", "")
                 tx["confidence"] = ai_data.get("confidence", 0.5)
                 tx["is_asset_candidate"] = ai_data.get("is_asset_candidate", False)
@@ -459,17 +612,20 @@ CATEGORIZE ALL {len(transactions)} TRANSACTIONS AND RETURN JSON ARRAY:"""
                     )
                     override_count += 1
 
-            # E-ZPass debits from Bank of America (USD chequing — not RBC)
+            # E-ZPass (card Description or BoA export with Customer BOA Yeliz in aux fields)
             if (
                 tx.get("type") == "expense"
-                and ("ezpass" in desc1 or "e-zpass" in desc1)
-                and "bank of america" in desc2
+                and ("ezpass" in desc1 or "e-zpass" in desc1 or "e zpass" in desc1)
                 and tx.get("category") != "tolls_scales"
             ):
                 tx["category"] = "tolls_scales"
-                tx["vendor_name"] = "E-ZPass (Bank of America)"
-                tx["notes"] = "US E-ZPass replenishment (Bank of America checking)"
-                logger.info("Override: E-ZPass + BoA -> tolls_scales")
+                if "bank of america" in desc2 or ("boa" in desc2 and "yeliz" in desc2):
+                    tx["vendor_name"] = "E-ZPass (Bank of America)"
+                    tx["notes"] = "US E-ZPass replenishment (Bank of America)"
+                else:
+                    tx["vendor_name"] = "E-ZPass"
+                    tx["notes"] = "US toll (E-ZPass)"
+                logger.info("Override: E-ZPass -> tolls_scales")
                 override_count += 1
         
         if override_count > 0:
