@@ -412,7 +412,7 @@ export default function DashboardPage() {
                 </p>
               )}
               <p className="text-xs text-slate-500 mt-1">
-                {summary?.totals?.expense_count || 0} operating lines
+                {summary?.totals?.expense_count || 0} operating lines (net of ITC)
                 {ccaDeduction > 0 && summary?.totals?.cca_fiscal_year != null
                   ? ` · + ${formatCurrency(ccaDeduction)} CCA (${summary.totals.cca_fiscal_year})`
                   : ""}
@@ -421,6 +421,11 @@ export default function DashboardPage() {
                   Assets
                 </Link>
               </p>
+              {!summaryLoading && summary?.totals?.total_cad != null && (
+                <p className="text-[11px] text-slate-600 mt-1.5">
+                  Gross operating expenses: {formatCurrency(summary.totals.total_cad)}
+                </p>
+              )}
             </div>
             <div className="w-10 h-10 rounded-lg bg-red-500/20 flex items-center justify-center text-red-500">
               <Receipt className="w-5 h-5" />
@@ -461,7 +466,9 @@ export default function DashboardPage() {
                   {formatCurrency(netProfit)}
                 </p>
               )}
-              <p className="text-xs text-slate-500 mt-1">Revenue - Expenses</p>
+              <p className="text-xs text-slate-500 mt-1">
+                Gross revenue − total net expenses (P&L)
+              </p>
             </div>
             <div
               className={cn(
@@ -568,7 +575,12 @@ export default function DashboardPage() {
                     currencyColor="emerald"
                     title="CAD Expenses"
                     subtitle={`${summary?.by_currency?.cad?.count || 0} entries`}
-                    amount={formatCurrency(summary?.by_currency?.cad?.original_total || 0)}
+                    amount={formatCurrency(
+                      summary?.by_currency?.cad?.net_total_cad ??
+                        summary?.by_currency?.cad?.original_total ??
+                        0,
+                    )}
+                    amountSub={`Gross: ${formatCurrency(summary?.by_currency?.cad?.original_total || 0)}`}
                     isExpanded={drillDown === "cad_expense"}
                     onClick={() => setDrillDown(drillDown === "cad_expense" ? null : "cad_expense")}
                   />
@@ -599,8 +611,12 @@ export default function DashboardPage() {
                     currencyColor="blue"
                     title="USD Expenses"
                     subtitle={`${summary?.by_currency?.usd?.count || 0} entries · ${formatCurrency(summary?.by_currency?.usd?.original_total || 0, "USD")}`}
-                    amount={formatCurrency(summary?.by_currency?.usd?.converted_cad || 0)}
-                    amountSub={`avg rate: ${(summary?.by_currency?.usd?.avg_rate || 0).toFixed(4)}`}
+                    amount={formatCurrency(
+                      summary?.by_currency?.usd?.net_converted_cad ??
+                        summary?.by_currency?.usd?.converted_cad ??
+                        0,
+                    )}
+                    amountSub={`Gross CAD: ${formatCurrency(summary?.by_currency?.usd?.converted_cad || 0)} · avg ${(summary?.by_currency?.usd?.avg_rate || 0).toFixed(4)}`}
                     isExpanded={drillDown === "usd_expense"}
                     onClick={() => setDrillDown(drillDown === "usd_expense" ? null : "usd_expense")}
                   />
@@ -643,14 +659,14 @@ export default function DashboardPage() {
             summary?.totals?.total_net_expense_cad ?? summary?.totals?.total_cad,
           )}
           subtitle="Net of recoverable GST/HST (ITC)"
+          detailMuted={
+            summary?.totals?.total_cad != null
+              ? `Gross operating expenses: ${formatCurrency(summary.totals.total_cad)}`
+              : undefined
+          }
           icon={<DollarSign className="w-5 h-5" />}
           color="yel"
           loading={summaryLoading}
-          tooltip={
-            summary?.totals?.total_cad != null
-              ? `Gross (bank/receipt) total: ${formatCurrency(summary.totals.total_cad)}`
-              : undefined
-          }
         />
         <StatCard
           title="Receipts"
@@ -730,7 +746,8 @@ export default function DashboardPage() {
                 Expenses by Category
               </h2>
               <p className="text-[11px] text-slate-500 mt-1 max-w-xl">
-                Operating categories exclude purchases reclassified to{" "}
+                Amounts are net of recoverable GST/HST (ITC) per category. Operating categories
+                exclude purchases reclassified to{" "}
                 <Link href="/assets" className="text-amber-500 hover:underline">
                   Assets
                 </Link>
@@ -1014,6 +1031,7 @@ function StatCard({
   title,
   value,
   subtitle,
+  detailMuted,
   icon,
   color,
   loading,
@@ -1022,6 +1040,7 @@ function StatCard({
   title: string;
   value: string;
   subtitle: string;
+  detailMuted?: string;
   icon: React.ReactNode;
   color: "yel" | "blue" | "green" | "purple" | "cyan";
   loading?: boolean;
@@ -1064,6 +1083,9 @@ function StatCard({
             <p className="text-2xl font-bold text-white">{value}</p>
           )}
           <p className="text-xs text-slate-500 mt-1">{subtitle}</p>
+          {detailMuted && (
+            <p className="text-[11px] text-slate-600 mt-1 leading-snug">{detailMuted}</p>
+          )}
         </div>
         <div
           className={cn(

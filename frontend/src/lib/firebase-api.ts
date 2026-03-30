@@ -3354,10 +3354,16 @@ export const exportApi = {
       e_transfer: 0,
       unknown: 0,
     };
-    // Currency breakdown for expenses
+    // Currency breakdown for expenses (gross in original/converted; net aligns with Total Expenses / exports)
     const by_currency = {
-      cad: { original_total: 0, count: 0 },
-      usd: { original_total: 0, converted_cad: 0, count: 0, avg_rate: 0 },
+      cad: { original_total: 0, net_total_cad: 0, count: 0 },
+      usd: {
+        original_total: 0,
+        converted_cad: 0,
+        net_converted_cad: 0,
+        count: 0,
+        avg_rate: 0,
+      },
     };
 
     expenses.expenses.forEach((expense) => {
@@ -3372,9 +3378,11 @@ export const exportApi = {
       if (currency === "USD") {
         by_currency.usd.original_total += expense.original_amount || 0;
         by_currency.usd.converted_cad += cadAmount;
+        by_currency.usd.net_converted_cad += netCad;
         by_currency.usd.count += 1;
       } else {
         by_currency.cad.original_total += expense.original_amount || cadAmount || 0;
+        by_currency.cad.net_total_cad += netCad;
         by_currency.cad.count += 1;
       }
 
@@ -3450,6 +3458,10 @@ export const exportApi = {
     if (by_currency.usd.count > 0 && by_currency.usd.original_total > 0) {
       by_currency.usd.avg_rate = by_currency.usd.converted_cad / by_currency.usd.original_total;
     }
+    by_currency.cad.net_total_cad =
+      Math.round(by_currency.cad.net_total_cad * 100) / 100;
+    by_currency.usd.net_converted_cad =
+      Math.round(by_currency.usd.net_converted_cad * 100) / 100;
 
     const ccaYear = fullCalendarYearFromRange(params?.start_date, params?.end_date);
     let ccaDeduction = 0;
