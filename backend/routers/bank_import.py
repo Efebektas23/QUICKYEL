@@ -22,6 +22,25 @@ VALID_CATEGORIES = [
     "rent_lease", "loan_interest", "other_expenses", "uncategorized"
 ]
 
+
+def _transaction_row_is_usd_account(tx: dict) -> bool:
+    """True when the CSV row carries USD amounts (RBC USD column), not CAD."""
+    ausd = tx.get("amount_usd")
+    acad = tx.get("amount_cad")
+    return ausd is not None and ausd != 0 and (acad is None or acad == 0)
+
+
+def _is_rbc_usd_business_pad_tch_expense(tx: dict) -> bool:
+    """RBC USD Business PAD + TCH descriptors = RXO fuel (not TCH Canada lease)."""
+    if tx.get("type") != "expense":
+        return False
+    combo = f'{(tx.get("description1") or "")} {(tx.get("description2") or "")}'.lower()
+    return (
+        _transaction_row_is_usd_account(tx)
+        and "business pad" in combo
+        and "tch" in combo
+    )
+
 # Gemini prompt for bank transaction categorization
 BANK_CATEGORIZATION_PROMPT = """You are an expert Canadian accountant for a trucking/logistics company (BACKTAS GLOBAL LOGISTICS ULC).
 You need to categorize bank transactions from an RBC business chequing account.
@@ -33,7 +52,8 @@ COMPANY CONTEXT:
 - Has ICBC truck/trailer insurance policies
 - Pays employees via Direct Deposits and e-Transfers
 - Common vendors: ICBC (insurance), CAFO Inc (insurance), J D Factors (factoring)
-- Has "TCH CANADA" / "Business PAD" recurring payments (truck lease or equipment payments)
+- Has "TCH CANADA" / "Business PAD" on the **CAD** account = truck/equipment **lease** (rent_lease) to TCH Canada
+- **RBC USD account (07760-4001350)**: debits labeled **Business PAD** with **TCH** (and often broker context) are **RXO fuel card / fuel program** charges — MUST use category **"fuel"**, vendor **"RXO"**, NOT rent_lease
 - Company has two RBC accounts: one CAD (07760-1001270) and one USD (07760-4001350)
 - Owner names: "Yeliz Bektas", "Ozan Bektas"
 
@@ -74,11 +94,11 @@ TRANSACTION CLASSIFICATION RULES:
    - "office_admin": "Monthly fee", "Electronic transaction fee", "Bill Payment PAY-FILE FEES", "INTERAC e-Transfer fee", "Service fee", "Items on deposit fee", "In branch cash deposited fee", "Online Banking wire fee", bank charges
    - "factoring_fees": Any J D Factors fees or charges (NOT incoming payments)
    - "other_expenses": "COMMERCIAL TAXES", "EMPTX", tax remittances
-   - "rent_lease": "Business PAD" + "TCH CANADA" = truck/equipment lease payments
+   - "rent_lease": **CAD account only** — "Business PAD" + "TCH CANADA" = truck/equipment lease to TCH Canada
+   - "fuel": Gas stations (PETRO-CANADA, SHELL, etc.); **USD account** — "Business PAD" + "TCH" = **RXO fuel** (NOT rent_lease)
    - "subcontractor": e-Transfer to known contractors/drivers
    - "professional_fees": Payments to accountants, lawyers, consultants
    - "loan_interest": Loan payments, "PURCHASE INTEREST"
-   - "fuel": Gas station, fuel, PETRO-CANADA, SHELL
    - "maintenance_repairs": Vehicle repairs, parts
    - "licenses_dues": Government permits, licenses
    - "tolls_scales": Tolls, bridge fees, scale fees
@@ -409,6 +429,19 @@ CATEGORIZE ALL {len(transactions)} TRANSACTIONS AND RETURN JSON ARRAY:"""
                         tx["vendor_name"] = tx.get("description2", "").split(",")[0] if tx.get("description2") else "Owner"
                         tx["notes"] = "Personal e-Transfer (owner draw)"
                         override_count += 1
+            
+            # RBC USD: Business PAD / TCH debits are RXO fuel — never rent_lease
+            if _is_rbc_usd_business_pad_tch_expense(tx):
+                prev = tx.get("category")
+                tx["category"] = "fuel"
+                tx["vendor_name"] = "RXO"
+                tx["notes"] = "Fuel — RXO (RBC USD Business PAD / TCH)"
+                if prev != "fuel":
+                    logger.info(
+                        "Override: USD Business PAD+TCH -> fuel (RXO), was category=%s",
+                        prev,
+                    )
+                    override_count += 1
         
         if override_count > 0:
             logger.warning(f"Post-AI validation: overrode {override_count} AI classifications")
@@ -548,10 +581,15 @@ CATEGORIZE ALL {len(transactions)} TRANSACTIONS AND RETURN JSON ARRAY:"""
                     tx["category"] = "office_admin"
                     tx["vendor_name"] = "RBC"
                     tx["notes"] = "Wire transfer fee"
-                elif "business pad" in desc1 and "tch canada" in desc2:
-                    tx["category"] = "rent_lease"
-                    tx["vendor_name"] = "TCH Canada"
-                    tx["notes"] = "Truck/equipment lease payment"
+                elif "business pad" in desc1 and ("tch" in desc1 or "tch" in desc2):
+                    if _transaction_row_is_usd_account(tx):
+                        tx["category"] = "fuel"
+                        tx["vendor_name"] = "RXO"
+                        tx["notes"] = "Fuel — RXO (RBC USD Business PAD / TCH)"
+                    else:
+                        tx["category"] = "rent_lease"
+                        tx["vendor_name"] = "TCH Canada"
+                        tx["notes"] = "Truck/equipment lease payment (CAD — TCH Canada)"
                 elif "e-transfer sent" in desc1 or "e-transfer" in desc1:
                     tx["category"] = "other_expenses"
                     tx["payment_source"] = "e_transfer"
