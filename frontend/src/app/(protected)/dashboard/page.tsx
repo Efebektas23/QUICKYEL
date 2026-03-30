@@ -7,6 +7,7 @@ import {
   DollarSign,
   Receipt,
   TrendingUp,
+  TrendingDown,
   Fuel,
   Wrench,
   UtensilsCrossed,
@@ -32,9 +33,16 @@ import {
   X,
   Image as ImageIcon,
   Link as LinkIcon,
+  Package,
 } from "lucide-react";
 import Link from "next/link";
-import { exportApi, expensesApi, revenueApi } from "@/lib/firebase-api";
+import { useRouter } from "next/navigation";
+import {
+  exportApi,
+  expensesApi,
+  revenueApi,
+  isExpenseReclassifiedToAsset,
+} from "@/lib/firebase-api";
 import { formatCurrency, formatDate, cn } from "@/lib/utils";
 import { categoryLabels, categoryColors } from "@/lib/store";
 import { CategoryExpenseDrawer } from "@/components/dashboard/CategoryExpenseDrawer";
@@ -53,6 +61,7 @@ const categoryIcons: Record<string, React.ReactNode> = {
   subcontractor: <Users className="w-5 h-5" />,
   professional_fees: <FileCheck className="w-5 h-5" />,
   rent_lease: <FileText className="w-5 h-5" />,
+  depreciation_cca: <TrendingDown className="w-5 h-5" />,
   loan_interest: <DollarSign className="w-5 h-5" />,
   other_expenses: <HelpCircle className="w-5 h-5" />,
   uncategorized: <HelpCircle className="w-5 h-5" />,
@@ -84,6 +93,7 @@ const PERIOD_OPTIONS: PeriodOption[] = [
 type DrillDownType = "cad_revenue" | "usd_revenue" | "cad_expense" | "usd_expense" | null;
 
 export default function DashboardPage() {
+  const router = useRouter();
   const [selectedPeriod, setSelectedPeriod] = useState<PeriodPreset>("all");
   const [showPeriodMenu, setShowPeriodMenu] = useState(false);
   const [drillDown, setDrillDown] = useState<DrillDownType>(null);
@@ -194,13 +204,15 @@ export default function DashboardPage() {
         return db - da;
       });
 
+      const forDisplay = expenses.filter((e) => !isExpenseReclassifiedToAsset(e));
+
       // Currency split for drill-down
-      const cadExpenses = expenses.filter((e: any) => (e.original_currency || "CAD") !== "USD");
-      const usdExpenses = expenses.filter((e: any) => (e.original_currency || "CAD") === "USD");
+      const cadExpenses = forDisplay.filter((e: any) => (e.original_currency || "CAD") !== "USD");
+      const usdExpenses = forDisplay.filter((e: any) => (e.original_currency || "CAD") === "USD");
 
       return {
-        expenses: expenses.slice(0, 5),
-        total: expenses.length,
+        expenses: forDisplay.slice(0, 5),
+        total: forDisplay.length,
         // For drill-down
         cad_items: cadExpenses,
         usd_items: usdExpenses,
@@ -210,8 +222,36 @@ export default function DashboardPage() {
 
   // Calculate profitability metrics
   const grossRevenue = revenueSummary?.total_cad || 0;
-  const totalExpenses = summary?.totals?.total_cad || 0;
-  const netProfit = grossRevenue - totalExpenses;
+  const totalOperatingExpenses = summary?.totals?.total_cad || 0;
+  const ccaDeduction = summary?.totals?.cca_deduction_cad || 0;
+  const totalExpensesForPnl =
+    summary?.totals?.total_pnl_expense_cad ??
+    totalOperatingExpenses + ccaDeduction;
+  const netProfit = grossRevenue - totalExpensesForPnl;
+
+  const expenseChartTotal = useMemo(
+    () => totalOperatingExpenses + ccaDeduction,
+    [totalOperatingExpenses, ccaDeduction],
+  );
+
+  const categoryDonutSlices = useMemo(() => {
+    if (!summary?.by_category) return [];
+    const rows = Object.entries(summary.by_category).map(
+      ([cat, data]: [string, any]) => ({
+        category: cat,
+        amount: data.total_cad,
+        color: categoryColors[cat] || "#6B7280",
+      }),
+    );
+    if (ccaDeduction > 0) {
+      rows.push({
+        category: "depreciation_cca",
+        amount: ccaDeduction,
+        color: categoryColors.depreciation_cca || "#22C55E",
+      });
+    }
+    return rows.sort((a, b) => b.amount - a.amount);
+  }, [summary?.by_category, ccaDeduction]);
 
   // Payment source breakdown
   const bankChecking = summary?.by_payment_source?.bank_checking || 0;
@@ -363,16 +403,23 @@ export default function DashboardPage() {
         >
           <div className="flex items-start justify-between">
             <div>
-              <p className="text-sm text-red-400 mb-1">Total Expenses</p>
+              <p className="text-sm text-red-400 mb-1">Total expenses (P&L)</p>
               {summaryLoading ? (
                 <div className="h-8 w-24 bg-slate-800 rounded animate-pulse" />
               ) : (
                 <p className="text-2xl font-bold text-white">
-                  {formatCurrency(totalExpenses)}
+                  {formatCurrency(totalExpensesForPnl)}
                 </p>
               )}
               <p className="text-xs text-slate-500 mt-1">
-                {summary?.totals?.expense_count || 0} verified &middot; all in CAD
+                {summary?.totals?.expense_count || 0} operating lines
+                {ccaDeduction > 0 && summary?.totals?.cca_fiscal_year != null
+                  ? ` · + ${formatCurrency(ccaDeduction)} CCA (${summary.totals.cca_fiscal_year})`
+                  : ""}
+                {" · "}capital purchases tracked under{" "}
+                <Link href="/assets" className="text-amber-500 hover:underline">
+                  Assets
+                </Link>
               </p>
             </div>
             <div className="w-10 h-10 rounded-lg bg-red-500/20 flex items-center justify-center text-red-500">
@@ -631,7 +678,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Payment Source Breakdown */}
-      {!summaryLoading && totalExpenses > 0 && (
+      {!summaryLoading && totalOperatingExpenses > 0 && (
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
@@ -645,21 +692,21 @@ export default function DashboardPage() {
               icon={<CreditCard className="w-5 h-5" />}
               label="Company Card"
               amount={companyCard}
-              total={totalExpenses}
+              total={totalOperatingExpenses}
               color="blue"
             />
             <PaymentMethodCard
               icon={<Landmark className="w-5 h-5" />}
               label="Bank / Checking"
               amount={bankChecking}
-              total={totalExpenses}
+              total={totalOperatingExpenses}
               color="emerald"
             />
             <PaymentMethodCard
               icon={<ArrowLeftRight className="w-5 h-5" />}
               label="e-Transfer"
               amount={eTransfer}
-              total={totalExpenses}
+              total={totalOperatingExpenses}
               color="amber"
             />
           </div>
@@ -670,13 +717,31 @@ export default function DashboardPage() {
       <div className="grid lg:grid-cols-3 gap-6">
         {/* Category Breakdown with Donut Chart */}
         <div className="lg:col-span-2 card p-4 md:p-6">
-          <div className="flex items-center justify-between gap-2 mb-4">
-            <h2 className="text-lg font-semibold text-white">
-              Expenses by Category
-            </h2>
-            <p className="text-xs text-slate-500 hidden sm:block">
-              Click a category for transactions
-            </p>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
+            <div>
+              <h2 className="text-lg font-semibold text-white">
+                Expenses by Category
+              </h2>
+              <p className="text-[11px] text-slate-500 mt-1 max-w-xl">
+                Operating categories exclude purchases reclassified to{" "}
+                <Link href="/assets" className="text-amber-500 hover:underline">
+                  Assets
+                </Link>
+                . Depreciation (CCA) appears for full calendar-year periods (FY).
+              </p>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <Link
+                href="/assets"
+                className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-500 hover:text-amber-400 px-3 py-1.5 rounded-lg border border-amber-500/30 bg-amber-500/5"
+              >
+                <Package className="w-3.5 h-3.5" />
+                Assets & CCA
+              </Link>
+              <p className="text-xs text-slate-500 hidden md:block">
+                Click a category for transactions
+              </p>
+            </div>
           </div>
           {summaryLoading ? (
             <LoadingSkeleton count={5} />
@@ -685,14 +750,8 @@ export default function DashboardPage() {
               {/* SVG Donut Chart */}
               <div className="mx-auto md:mx-0 flex-shrink-0">
                 <CategoryDonut
-                  categories={Object.entries(summary.by_category)
-                    .sort(([, a]: [string, any], [, b]: [string, any]) => b.total_cad - a.total_cad)
-                    .map(([cat, data]: [string, any]) => ({
-                      category: cat,
-                      amount: data.total_cad,
-                      color: categoryColors[cat] || "#6B7280",
-                    }))}
-                  total={summary.totals.total_cad}
+                  categories={categoryDonutSlices}
+                  total={expenseChartTotal}
                 />
               </div>
               {/* Category Bars */}
@@ -705,10 +764,20 @@ export default function DashboardPage() {
                       category={category}
                       amount={data.total_cad}
                       count={data.count}
-                      total={summary.totals.total_cad}
+                      total={expenseChartTotal}
                       onSelect={() => setCategoryDrawerCategory(category)}
                     />
                   ))}
+                {ccaDeduction > 0 && (
+                  <CategoryBar
+                    key="depreciation_cca"
+                    category="depreciation_cca"
+                    amount={ccaDeduction}
+                    count={0}
+                    total={expenseChartTotal}
+                    onSelect={() => router.push("/assets")}
+                  />
+                )}
               </div>
             </div>
           ) : (
@@ -795,7 +864,7 @@ export default function DashboardPage() {
         <h2 className="text-lg font-semibold text-white mb-4">
           Quick Actions
         </h2>
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
           <QuickAction
             href="/upload"
             icon={<Upload className="w-6 h-6" />}
@@ -815,6 +884,11 @@ export default function DashboardPage() {
             href="/export"
             icon={<FileText className="w-6 h-6" />}
             label="Export Data"
+          />
+          <QuickAction
+            href="/assets"
+            icon={<Package className="w-6 h-6" />}
+            label="Assets & CCA"
           />
           <QuickAction
             href="/cards"
@@ -992,7 +1066,11 @@ function CategoryBar({
           <span className="text-sm text-slate-300">
             {categoryLabels[category] || category}
           </span>
-          <span className="text-xs text-slate-500">({count})</span>
+          <span className="text-xs text-slate-500">
+            {category === "depreciation_cca"
+              ? "(annual CCA)"
+              : `(${count})`}
+          </span>
         </div>
         <span className="text-sm font-medium text-white">
           {formatCurrency(amount)}

@@ -389,6 +389,31 @@ export function detectAssetCandidate(
 } | null {
   const desc = (description + " " + vendorName).toLowerCase();
 
+  // Capital purchases often mis-tagged as rent_lease (e.g. dealer "payment", trailer purchase)
+  const rentLeaseCapitalHints = [
+    "honda", "toyota", "ford", "chevrolet", "gmc", "ram", "openroad", "open road",
+    "dealership", "dealer", "motors", "auto group", "auto sales",
+    "cr-v", "crv", "rav4", "suv",
+    "trailer", "dry van", "reefer", "flatbed", "quest trailer",
+  ];
+  if (
+    category === "rent_lease" &&
+    amount >= 5000 &&
+    rentLeaseCapitalHints.some((kw) => desc.includes(kw))
+  ) {
+    const isTrailer =
+      desc.includes("trailer") ||
+      desc.includes("dry van") ||
+      desc.includes("reefer") ||
+      desc.includes("flatbed");
+    return {
+      isAssetCandidate: true,
+      reason: `Recorded as Rent/Lease but looks like a capital purchase (${vendorName})`,
+      suggestedClasses: suggestCCAClass(isTrailer ? "trailer" : "vehicle", amount, desc),
+      suggestedCategory: isTrailer ? "trailer" : "vehicle",
+    };
+  }
+
   // Vehicle keywords
   const vehicleKeywords = [
     "honda", "toyota", "ford", "chevrolet", "gmc", "ram",

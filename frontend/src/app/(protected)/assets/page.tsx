@@ -228,11 +228,20 @@ export default function AssetsPage() {
       {/* CCA Info Banner */}
       <div className="flex items-start gap-3 p-4 bg-blue-500/5 border border-blue-500/20 rounded-xl">
         <Info className="w-5 h-5 text-blue-400 flex-shrink-0 mt-0.5" />
-        <div className="text-xs text-slate-400">
-          <p className="text-blue-400 font-medium mb-1">CRA Half-Year Rule</p>
+        <div className="text-xs text-slate-400 space-y-2">
           <p>
-            In the year an asset is acquired, only 50% of the normal CCA rate
-            is allowed. This is automatically applied by the system.
+            <span className="text-blue-400 font-medium">CRA classes (2025):</span>{" "}
+            standard trailers and equipment typically fall under{" "}
+            <strong className="text-slate-300">Class 10</strong> (30% declining balance).
+            Passenger vehicles over the prescribed cost limit use{" "}
+            <strong className="text-slate-300">Class 10.1</strong> with a depreciable cap
+            (e.g. $38,000 + tax for 2025). The purchase is capitalized here; only CCA flows
+            to the P&L — not the full cash payment.
+          </p>
+          <p>
+            <span className="text-blue-400 font-medium">Half-year rule:</span> In the
+            acquisition year, only half of the normal CCA rate applies on the net addition.
+            This is applied automatically.
           </p>
         </div>
       </div>

@@ -94,7 +94,8 @@ TRANSACTION CLASSIFICATION RULES:
    - "office_admin": "Monthly fee", "Electronic transaction fee", "Bill Payment PAY-FILE FEES", "INTERAC e-Transfer fee", "Service fee", "Items on deposit fee", "In branch cash deposited fee", "Online Banking wire fee", bank charges
    - "factoring_fees": Any J D Factors fees or charges (NOT incoming payments)
    - "other_expenses": "COMMERCIAL TAXES", "EMPTX", tax remittances
-   - "rent_lease": **CAD account only** — "Business PAD" + "TCH CANADA" = truck/equipment lease to TCH Canada
+   - "rent_lease": **CAD account only** — "Business PAD" + "TCH CANADA" = truck/equipment lease to TCH Canada (recurring lease — NOT a dealer vehicle/trailer purchase)
+   - ⚠️ Vehicle or trailer **purchase / loan principal** payments to **auto dealers**, "OpenRoad", "Honda", "Toyota", "Quest Trailer", trailer vendors, etc. are **capital assets** — use "rent_lease" ONLY for true operating leases; for purchases use the best expense category tag for audit BUT set "is_asset_candidate": true and prefer "other_expenses" or "maintenance_repairs" over "rent_lease" if unsure (user will reclassify to Asset in app)
    - "fuel": Gas stations (PETRO-CANADA, SHELL, etc.); **USD account** — "Business PAD" + "TCH" = **RXO fuel** (NOT rent_lease)
    - "subcontractor": e-Transfer to known contractors/drivers
    - "professional_fees": Payments to accountants, lawyers, consultants

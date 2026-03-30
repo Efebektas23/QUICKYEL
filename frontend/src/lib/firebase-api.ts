@@ -23,6 +23,18 @@ import {
 } from "firebase/storage";
 import * as XLSX from "xlsx";
 import { fetchJsonWithRetry } from "./fetch-with-retry";
+import {
+  getTotalCCAForYear,
+  getAdjustedCost,
+  generateUCCSchedule,
+  getCCAForYear,
+  getUCCBalance,
+  detectAssetCandidate,
+  type Asset as CCAAsset,
+  type AssetCategory as CCAAssetCategory,
+  type AssetStatus as CCAAssetStatus,
+  type UCCScheduleEntry,
+} from "./cca-engine";
 
 // Collection references
 const EXPENSES_COLLECTION = "expenses";
@@ -72,6 +84,34 @@ export interface Expense {
   receipt_linked_date?: Date;
   created_at: Date;
   updated_at: Date;
+  /** True when this row was converted to a balance-sheet asset (CCA); exclude from P&L operating expenses. */
+  reclassified_to_asset?: boolean;
+}
+
+/** Operating-expense totals should ignore rows moved to Assets / CCA. */
+export function isExpenseReclassifiedToAsset(
+  e: Pick<Expense, "notes" | "reclassified_to_asset">,
+): boolean {
+  if (e.reclassified_to_asset === true) return true;
+  const n = e.notes || "";
+  return n.includes("[RECLASSIFIED TO ASSET]");
+}
+
+/** Set by assetsApi init — avoids forward reference when exportApi.getSummary lists assets for CCA. */
+let listAssetsForSummary: (() => Promise<CCAAsset[]>) | null = null;
+
+function fullCalendarYearFromRange(
+  start?: string,
+  end?: string,
+): number | null {
+  if (!start || !end) return null;
+  const s = new Date(`${start}T12:00:00`);
+  const e = new Date(`${end}T12:00:00`);
+  const y = s.getFullYear();
+  if (y !== e.getFullYear()) return null;
+  if (s.getMonth() !== 0 || s.getDate() !== 1) return null;
+  if (e.getMonth() !== 11 || e.getDate() !== 31) return null;
+  return y;
 }
 
 /** High-level data source for audit filters (maps to entry_type). */
@@ -406,6 +446,7 @@ export const expensesApi = {
 
     const cat = params.category;
     list = list.filter((e) => (e.category || "uncategorized") === cat);
+    list = list.filter((e) => !isExpenseReclassifiedToAsset(e));
 
     const q = (params.truck_driver_query || "").trim().toLowerCase();
     if (q) {
@@ -3070,7 +3111,8 @@ export const exportApi = {
     ];
 
     // ===== SUMMARY SHEET =====
-    const totalExpensesCAD = expenses.reduce((sum, e) => sum + (e.cad_amount || 0), 0);
+    const expensesForPnl = expenses.filter((e) => !isExpenseReclassifiedToAsset(e));
+    const totalExpensesCAD = expensesForPnl.reduce((sum, e) => sum + (e.cad_amount || 0), 0);
     const totalGST = expenses.reduce((sum, e) => sum + (e.gst_amount || 0), 0);
     const totalHST = expenses.reduce((sum, e) => {
       // Backward compatibility: use tax_amount if no separate hst_amount
@@ -3080,7 +3122,7 @@ export const exportApi = {
     }, 0);
     const totalPST = expenses.reduce((sum, e) => sum + (e.pst_amount || 0), 0);
     const totalTaxRecoverable = totalGST + totalHST; // Only GST + HST are ITC recoverable
-    const totalDeductible = expenses.reduce((sum, e) => {
+    const totalDeductible = expensesForPnl.reduce((sum, e) => {
       const cat = e.category || "uncategorized";
       const rate = DEDUCTION_RATES[cat] ?? 0.0;
       return sum + (e.cad_amount || 0) * rate;
@@ -3129,6 +3171,7 @@ export const exportApi = {
 
     // Only count verified expenses for summary (matching backend behavior)
     let filteredExpenses = allExpenses.expenses.filter(e => e.is_verified);
+    filteredExpenses = filteredExpenses.filter((e) => !isExpenseReclassifiedToAsset(e));
 
     // Apply date filters if provided
     if (params?.start_date) {
@@ -3161,6 +3204,12 @@ export const exportApi = {
       total_tax: 0,   // Sum of GST + HST + PST
       total_potential_deductions: 0,  // T2125 tax deductions
       meals_50_percent: 0,  // 50% deductible portion of meals
+      /** CCA depreciation for a full Jan 1 – Dec 31 calendar year (CRA); 0 for partial-year views */
+      cca_deduction_cad: 0,
+      /** Operating expenses (total_cad) + cca_deduction_cad — use for net profit on full-year views */
+      total_pnl_expense_cad: 0,
+      /** Calendar year when CCA is included, or null */
+      cca_fiscal_year: null as number | null,
     };
 
     const by_category: Record<string, { total_cad: number; count: number; total_deductible: number; total_gst: number; total_hst: number; total_pst: number; total_tax: number }> = {};
@@ -3254,6 +3303,21 @@ export const exportApi = {
       by_currency.usd.avg_rate = by_currency.usd.converted_cad / by_currency.usd.original_total;
     }
 
+    const ccaYear = fullCalendarYearFromRange(params?.start_date, params?.end_date);
+    let ccaDeduction = 0;
+    if (ccaYear !== null && listAssetsForSummary) {
+      try {
+        const assetRows = await listAssetsForSummary();
+        ccaDeduction = Math.round(getTotalCCAForYear(assetRows, ccaYear) * 100) / 100;
+      } catch {
+        ccaDeduction = 0;
+      }
+    }
+    totals.cca_deduction_cad = ccaDeduction;
+    totals.cca_fiscal_year = ccaYear;
+    totals.total_pnl_expense_cad =
+      Math.round((totals.total_cad + totals.cca_deduction_cad) * 100) / 100;
+
     return { totals, by_category, by_payment_source, by_currency };
   },
 };
@@ -3261,22 +3325,6 @@ export const exportApi = {
 // ============ ASSETS (CCA / Capital Cost Allowance) ============
 
 const ASSETS_COLLECTION = "assets";
-
-import type {
-  Asset as CCAAsset,
-  AssetCategory as CCAAssetCategory,
-  AssetStatus as CCAAssetStatus,
-  UCCScheduleEntry,
-} from "./cca-engine";
-
-import {
-  getAdjustedCost,
-  generateUCCSchedule,
-  getCCAForYear,
-  getUCCBalance,
-  getTotalCCAForYear,
-  detectAssetCandidate,
-} from "./cca-engine";
 
 export type { CCAAsset, CCAAssetCategory, CCAAssetStatus, UCCScheduleEntry };
 
@@ -3463,9 +3511,9 @@ export const assetsApi = {
       notes: `Reclassified from expense on ${new Date().toISOString().split("T")[0]}. Original category: ${expense.category}`,
     });
 
-    // 3. Mark expense as reclassified (keep it for audit trail)
+    // 3. Mark expense as reclassified (keep category for bank/receipt audit; excluded from P&L via flag)
     await expensesApi.update(expenseId, {
-      category: "uncategorized",
+      reclassified_to_asset: true,
       notes: `[RECLASSIFIED TO ASSET] Asset ID: ${assetId}. Original amount: ${purchaseCost.toLocaleString("en-CA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} CAD. This expense has been reclassified as a depreciable asset for CRA compliance.${expense.notes ? ` | Original notes: ${expense.notes}` : ""}`,
       is_verified: true,
     } as any);
@@ -3529,8 +3577,7 @@ export const assetsApi = {
     }> = [];
 
     for (const expense of allExpResult.expenses) {
-      // Skip already reclassified expenses
-      if (expense.notes?.includes("[RECLASSIFIED TO ASSET]")) continue;
+      if (isExpenseReclassifiedToAsset(expense)) continue;
 
       const amount = expense.cad_amount || expense.original_amount || 0;
       const result = detectAssetCandidate(
@@ -3553,4 +3600,6 @@ export const assetsApi = {
     return candidates;
   },
 };
+
+listAssetsForSummary = () => assetsApi.list();
 
