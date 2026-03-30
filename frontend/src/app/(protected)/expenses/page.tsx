@@ -26,6 +26,7 @@ import { expensesApi, cardsApi } from "@/lib/firebase-api";
 import { formatCurrency, formatDate, cn } from "@/lib/utils";
 import { categoryLabels, categoryColors } from "@/lib/store";
 import { ReviewModal } from "@/components/expenses/ReviewModal";
+import { ReclassifiedAssetBadge } from "@/components/expenses/ReclassifiedAssetBadge";
 import toast from "react-hot-toast";
 
 // ============ Intelligent Search Helpers ============
@@ -722,9 +723,12 @@ function ExpenseRow({
             </div>
           )}
           <div className="min-w-0">
-            <span className="text-sm text-white font-medium">
-              {expense.vendor_name || "Unknown Vendor"}
-            </span>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm text-white font-medium">
+                {expense.vendor_name || "Unknown Vendor"}
+              </span>
+              <ReclassifiedAssetBadge expense={expense} />
+            </div>
             <div className="mt-0.5">
               <SourceBadge info={sourceInfo} />
             </div>
@@ -816,9 +820,12 @@ function ExpenseCard({
         <div className="flex-1 min-w-0">
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
-              <p className="text-sm font-medium text-white truncate">
-                {expense.vendor_name || "Unknown Vendor"}
-              </p>
+              <div className="flex flex-wrap items-center gap-2 min-w-0">
+                <p className="text-sm font-medium text-white truncate">
+                  {expense.vendor_name || "Unknown Vendor"}
+                </p>
+                <ReclassifiedAssetBadge expense={expense} />
+              </div>
               <p className="text-xs text-slate-500">
                 {formatDate(expense.transaction_date)}
               </p>

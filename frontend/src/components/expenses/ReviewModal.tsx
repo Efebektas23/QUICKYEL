@@ -22,7 +22,8 @@ import {
 import { useForm } from "react-hook-form";
 import { useQuery } from "@tanstack/react-query";
 import toast from "react-hot-toast";
-import { expensesApi, cardsApi } from "@/lib/firebase-api";
+import { expensesApi, cardsApi, isExpenseReclassifiedToAsset } from "@/lib/firebase-api";
+import { ReclassifiedAssetBadge } from "@/components/expenses/ReclassifiedAssetBadge";
 import { formatCurrency, formatDate, cn } from "@/lib/utils";
 import { categoryLabels } from "@/lib/store";
 
@@ -223,10 +224,13 @@ export function ReviewModal({
         >
           {/* Header */}
           <div className="sticky top-0 z-10 flex items-center justify-between p-6 bg-slate-900 border-b border-slate-800">
-            <div>
-              <h2 className="text-xl font-display font-bold text-white">
-                Review Expense
-              </h2>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="text-xl font-display font-bold text-white">
+                  Review Expense
+                </h2>
+                <ReclassifiedAssetBadge expense={expense} size="md" />
+              </div>
               <p className="text-sm text-slate-400">
                 Verify the extracted data before saving
               </p>
@@ -241,6 +245,20 @@ export function ReviewModal({
 
           {/* Content */}
           <div className="p-6">
+            {isExpenseReclassifiedToAsset(expense) && (
+              <div className="mb-4 p-3 rounded-xl bg-violet-500/10 border border-violet-500/25">
+                <p className="text-violet-200 text-sm font-medium">
+                  Capital asset (CCA)
+                </p>
+                <p className="text-violet-300/80 text-xs mt-1">
+                  This cash-out is excluded from operating expenses and tracked under{" "}
+                  <a href="/assets" className="text-violet-200 underline hover:text-white">
+                    Assets & CCA
+                  </a>
+                  . Keep this row for bank/receipt audit only.
+                </p>
+              </div>
+            )}
             {/* Bank Link Banner */}
             {expense.receipt_linked && (
               <div className="mb-4 p-3 rounded-xl bg-blue-500/10 border border-blue-500/20">

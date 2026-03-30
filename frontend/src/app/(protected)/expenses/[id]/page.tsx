@@ -33,6 +33,7 @@ import {
 import { formatCurrency, formatDate, cn } from "@/lib/utils";
 import { categoryLabels, categoryColors } from "@/lib/store";
 import { ReviewModal } from "@/components/expenses/ReviewModal";
+import { ReclassifiedAssetBadge } from "@/components/expenses/ReclassifiedAssetBadge";
 
 export default function ExpenseDetailPage() {
   const params = useParams();
@@ -114,6 +115,7 @@ export default function ExpenseDetailPage() {
                 Pending
               </span>
             )}
+            <ReclassifiedAssetBadge expense={expense} size="md" />
           </div>
           <p className="text-slate-400">
             {formatDate(expense.transaction_date, "long")}
