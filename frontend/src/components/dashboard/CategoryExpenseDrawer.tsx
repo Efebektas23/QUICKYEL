@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState, useEffect } from "react";
+import React, { useMemo, useState, useEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -117,6 +117,12 @@ export function CategoryExpenseDrawer({
   const [bulkCategory, setBulkCategory] = useState("fuel");
   const [bulkSaving, setBulkSaving] = useState(false);
   const [savingCategoryId, setSavingCategoryId] = useState<string | null>(null);
+  const headerSelectAllRef = useRef<HTMLInputElement>(null);
+
+  const bulkTargetCategories = useMemo(
+    () => EXPENSE_CATEGORIES.filter((c) => c.id !== category),
+    [category]
+  );
 
   useEffect(() => {
     if (open) {
@@ -126,6 +132,8 @@ export function CategoryExpenseDrawer({
       setTruckDriverQ("");
       setSelected(null);
       setSelectedIds(new Set());
+      const firstTarget = EXPENSE_CATEGORIES.find((c) => c.id !== category)?.id ?? "fuel";
+      setBulkCategory(firstTarget);
     }
   }, [open, periodStart, periodEnd, category]);
 
@@ -161,8 +169,6 @@ export function CategoryExpenseDrawer({
     enabled: open && !!category,
   });
 
-  const isUncategorized = category === "uncategorized";
-
   const toggleSelect = (id: string) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -180,7 +186,7 @@ export function CategoryExpenseDrawer({
   const clearSelection = () => setSelectedIds(new Set());
 
   const runBulkAssign = async () => {
-    if (selectedIds.size === 0) return;
+    if (selectedIds.size === 0 || bulkCategory === category) return;
     setBulkSaving(true);
     try {
       await expensesApi.bulkUpdateCategory(Array.from(selectedIds), bulkCategory);
@@ -224,6 +230,19 @@ export function CategoryExpenseDrawer({
     if (!data?.stats.monthly_trend.length) return 1;
     return Math.max(...data.stats.monthly_trend.map((m) => m.total_cad), 1);
   }, [data]);
+
+  const visibleRowIds = data?.transactions.map((t) => t.id) ?? [];
+  const allVisibleSelected =
+    visibleRowIds.length > 0 && visibleRowIds.every((id) => selectedIds.has(id));
+  const someVisibleSelected =
+    visibleRowIds.length > 0 &&
+    visibleRowIds.some((id) => selectedIds.has(id)) &&
+    !allVisibleSelected;
+
+  useEffect(() => {
+    const el = headerSelectAllRef.current;
+    if (el) el.indeterminate = someVisibleSelected;
+  }, [someVisibleSelected]);
 
   if (!open || !category) return null;
 
@@ -282,7 +301,7 @@ export function CategoryExpenseDrawer({
               {!selected && (
                 <p className="text-xs text-slate-500 mt-0.5">
                   {expectedCount} in summary · {formatCurrency(expectedTotalCad)} — use the
-                  category column to reclassify without leaving the dashboard
+                  category column to reclassify; use checkboxes for bulk
                   {isFetching && !isLoading ? " · refreshing…" : ""}
                 </p>
               )}
@@ -428,59 +447,10 @@ export function CategoryExpenseDrawer({
                   </div>
                 )}
 
-                {isUncategorized && (
-                  <div className="rounded-xl border border-slate-700 bg-slate-800/40 p-3 space-y-2">
-                    <p className="text-xs font-medium text-white">
-                      Bulk assign category (or change one-by-one in the table)
-                    </p>
-                    <div className="flex flex-wrap gap-2">
-                      <select
-                        value={bulkCategory}
-                        onChange={(e) => setBulkCategory(e.target.value)}
-                        className="flex-1 min-w-[140px] rounded-lg bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm text-white"
-                      >
-                        {EXPENSE_CATEGORIES.filter((c) => c.id !== "uncategorized").map(
-                          (c) => (
-                            <option key={c.id} value={c.id}>
-                              {c.label}
-                            </option>
-                          )
-                        )}
-                      </select>
-                      <button
-                        type="button"
-                        disabled={selectedIds.size === 0 || bulkSaving}
-                        onClick={runBulkAssign}
-                        className="btn-primary text-sm py-1.5 px-3 disabled:opacity-40"
-                      >
-                        {bulkSaving ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : (
-                          `Assign (${selectedIds.size})`
-                        )}
-                      </button>
-                    </div>
-                    <div className="flex gap-2 text-xs">
-                      <button
-                        type="button"
-                        className="text-amber-500 hover:text-amber-400"
-                        onClick={selectAllVisible}
-                      >
-                        Select all
-                      </button>
-                      <button
-                        type="button"
-                        className="text-slate-500 hover:text-slate-400"
-                        onClick={clearSelection}
-                      >
-                        Clear
-                      </button>
-                    </div>
-                  </div>
-                )}
               </div>
 
-              <div className="flex-1 overflow-y-auto min-h-0">
+              <div className="flex-1 flex flex-col min-h-0">
+                <div className="flex-1 overflow-y-auto min-h-0">
                 {isLoading ? (
                   <div className="flex justify-center py-16">
                     <Loader2 className="w-8 h-8 text-yel-500 animate-spin" />
@@ -494,11 +464,19 @@ export function CategoryExpenseDrawer({
                   <table className="w-full text-sm min-w-[520px]">
                     <thead className="sticky top-0 bg-slate-900/95 backdrop-blur z-10 border-b border-slate-800">
                       <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500">
-                        {isUncategorized && (
-                          <th className="pl-3 py-2 w-10">
-                            <span className="sr-only">Select</span>
-                          </th>
-                        )}
+                        <th className="pl-3 py-2 w-10">
+                          <input
+                            ref={headerSelectAllRef}
+                            type="checkbox"
+                            checked={allVisibleSelected}
+                            onChange={() => {
+                              if (allVisibleSelected) clearSelection();
+                              else selectAllVisible();
+                            }}
+                            className="rounded border-slate-600"
+                            aria-label="Select all visible rows"
+                          />
+                        </th>
                         <th className="py-2 pl-1 pr-2">Date</th>
                         <th className="py-2 pr-2 min-w-[120px]">Vendor / description</th>
                         <th className="py-2 pr-2 w-[140px]">Category</th>
@@ -513,19 +491,18 @@ export function CategoryExpenseDrawer({
                           className="hover:bg-slate-800/40 cursor-pointer group"
                           onClick={() => setSelected(row)}
                         >
-                          {isUncategorized && (
-                            <td
-                              className="pl-3 py-2 align-top"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <input
-                                type="checkbox"
-                                checked={selectedIds.has(row.id)}
-                                onChange={() => toggleSelect(row.id)}
-                                className="rounded border-slate-600"
-                              />
-                            </td>
-                          )}
+                          <td
+                            className="pl-3 py-2 align-top"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={selectedIds.has(row.id)}
+                              onChange={() => toggleSelect(row.id)}
+                              className="rounded border-slate-600"
+                              aria-label={`Select ${row.vendor || "row"}`}
+                            />
+                          </td>
                           <td className="py-2 pl-1 pr-2 text-slate-400 whitespace-nowrap align-top text-xs">
                             {row.date ? formatDate(row.date) : "—"}
                           </td>
@@ -572,7 +549,7 @@ export function CategoryExpenseDrawer({
                     </tbody>
                     <tfoot className="border-t border-slate-700 bg-slate-900/80">
                       <tr>
-                        {isUncategorized && <td className="py-2 w-10" />}
+                        <td className="py-2 w-10" aria-hidden />
                         <td
                           colSpan={3}
                           className="py-2 pl-1 text-slate-400 text-xs font-medium"
@@ -586,6 +563,52 @@ export function CategoryExpenseDrawer({
                       </tr>
                     </tfoot>
                   </table>
+                  </div>
+                )}
+                </div>
+
+                {selectedIds.size > 0 && (
+                  <div className="flex-shrink-0 border-t border-yel-500/35 bg-slate-800/95 backdrop-blur-sm px-3 py-3 flex flex-wrap items-center gap-2 gap-y-2 shadow-[0_-8px_24px_rgba(0,0,0,0.35)]">
+                    <span className="text-sm font-medium text-white tabular-nums">
+                      {selectedIds.size} selected
+                    </span>
+                    <span className="text-slate-500 text-xs hidden sm:inline">→</span>
+                    <select
+                      value={bulkCategory}
+                      onChange={(e) => setBulkCategory(e.target.value)}
+                      className="flex-1 min-w-[160px] max-w-[220px] rounded-lg bg-slate-900 border border-slate-600 px-2 py-1.5 text-sm text-white"
+                      disabled={bulkSaving || bulkTargetCategories.length === 0}
+                    >
+                      {bulkTargetCategories.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.label}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      disabled={
+                        bulkSaving ||
+                        bulkTargetCategories.length === 0 ||
+                        bulkCategory === category
+                      }
+                      onClick={runBulkAssign}
+                      className="btn-primary text-sm py-1.5 px-3 disabled:opacity-40"
+                    >
+                      {bulkSaving ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        "Apply"
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      className="text-xs text-slate-400 hover:text-white underline-offset-2 hover:underline"
+                      onClick={clearSelection}
+                      disabled={bulkSaving}
+                    >
+                      Clear selection
+                    </button>
                   </div>
                 )}
               </div>
