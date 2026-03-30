@@ -39,6 +39,7 @@ import {
   computeBcItcAutoFieldsFromGross,
   expenseHasManualOrParsedTax,
   getEffectiveRecoverableItcCad,
+  getItcSourceLabel,
   getNetExpenseCad,
   mergeBcItcForCategoryChange,
 } from "./bc-expense-tax";
@@ -2896,7 +2897,7 @@ export const exportApi = {
       expenses = expenses.filter(e => e.transaction_date && new Date(e.transaction_date) <= endDate);
     }
 
-    // CSV Header
+    // CSV Header (aligns with dashboard net-of-ITC logic)
     const headers = [
       "Date",
       "Vendor",
@@ -2905,7 +2906,9 @@ export const exportApi = {
       "Original Amount",
       "Exchange Rate",
       "CAD Amount",
-      "GST/HST (ITC)",
+      "Net Expense (CAD)",
+      "Tax Recoverable (ITC)",
+      "ITC Source",
       "Payment Source",
       "Due to Shareholder",
       "Jurisdiction",
@@ -2922,7 +2925,9 @@ export const exportApi = {
       const dueToShareholder = expense.payment_source === "personal_card" ? "Yes" : "No";
       const jurisdiction = expense.jurisdiction === "canada" ? "CANADA" :
         expense.jurisdiction === "usa" ? "USA" : "UNKNOWN";
-      const taxAmount = (expense.gst_amount && expense.gst_amount > 0) ? expense.gst_amount : (expense.tax_amount || 0);
+      const netCad = getNetExpenseCad(expense);
+      const itcCad = getEffectiveRecoverableItcCad(expense);
+      const itcSource = getItcSourceLabel(expense);
 
       let notes = expense.notes || "";
       if (expense.category === "meals_entertainment") {
@@ -2937,7 +2942,9 @@ export const exportApi = {
         expense.original_amount?.toFixed(2) || "",
         expense.exchange_rate !== 1.0 ? expense.exchange_rate.toFixed(4) : "N/A (CAD)",
         expense.cad_amount?.toFixed(2) || "",
-        taxAmount.toFixed(2),
+        netCad.toFixed(2),
+        itcCad.toFixed(2),
+        itcSource,
         paymentSource,
         dueToShareholder,
         jurisdiction,
@@ -3006,23 +3013,28 @@ export const exportApi = {
       ...revenueRows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(","))
     ];
 
-    // ===== SUMMARY =====
-    const totalExpensesCAD = expenses.reduce((sum, e) => sum + (e.cad_amount || 0), 0);
+    // ===== SUMMARY (P&L uses operating expenses only; excludes reclassified-to-asset) =====
+    const pnlExpenses = expenses.filter((e) => !isExpenseReclassifiedToAsset(e));
+    const totalNetExpensesCAD = pnlExpenses.reduce((sum, e) => sum + getNetExpenseCad(e), 0);
+    const totalGrossOperatingCAD = pnlExpenses.reduce((sum, e) => sum + (e.cad_amount || 0), 0);
+    const totalItcEffective = pnlExpenses.reduce((sum, e) => sum + getEffectiveRecoverableItcCad(e), 0);
+    const totalPstRecorded = pnlExpenses.reduce((sum, e) => sum + (e.pst_amount || 0), 0);
     const totalRevenueCAD = revenues.reduce((sum, r) => sum + (r.amount_cad || 0), 0);
-    const netProfit = totalRevenueCAD - totalExpensesCAD;
-    const totalGST = expenses.reduce((sum, e) => {
-      const gst = (e.gst_amount && e.gst_amount > 0) ? e.gst_amount : (e.tax_amount || 0);
-      return sum + gst;
-    }, 0);
+    const netProfit = totalRevenueCAD - totalNetExpensesCAD;
 
     const summaryCsv = [
       "",
       "=== SUMMARY ===",
       `"Gross Revenue (CAD)","${totalRevenueCAD.toFixed(2)}"`,
-      `"Total Expenses (CAD)","${totalExpensesCAD.toFixed(2)}"`,
+      `"Total Expenses (CAD) — net of recoverable GST/HST (ITC)","${totalNetExpensesCAD.toFixed(2)}"`,
+      `"Gross Operating Expenses (CAD) — before ITC","${totalGrossOperatingCAD.toFixed(2)}"`,
       `"Net Profit (CAD)","${netProfit.toFixed(2)}"`,
-      `"Recoverable GST/HST (ITC)","${totalGST.toFixed(2)}"`,
-      `"Expense Count","${expenses.length}"`,
+      `"",""`,
+      `"Total GST+HST Recoverable (ITC) — asset","${totalItcEffective.toFixed(2)}"`,
+      `"PST (6-10%) — not recoverable (sunk; included in net expense)","${totalPstRecorded.toFixed(2)}"`,
+      `"",""`,
+      `"Expense row count (export)","${expenses.length}"`,
+      `"Operating expense rows (excl. reclassified to asset)","${pnlExpenses.length}"`,
       `"Revenue Count","${revenues.length}"`
     ];
 
@@ -3065,25 +3077,26 @@ export const exportApi = {
       );
     }
 
-    // Prepare data for Excel with separate tax columns
+    // Prepare data for Excel with separate tax columns + net expense / ITC source (dashboard logic)
     const excelData = expenses.map(expense => {
       const category = expense.category || "uncategorized";
       const deductionRate = DEDUCTION_RATES[category] ?? 0.0;
       const deductibleAmount = (expense.cad_amount || 0) * deductionRate;
 
-      // Get separate tax amounts with backward compatibility
+      // Recorded tax components (receipt / manual line items)
       const gstAmount = expense.gst_amount || 0;
       const hstAmount = expense.hst_amount || 0;
       const pstAmount = expense.pst_amount || 0;
 
-      // Backward compatibility: if no separate values, use tax_amount as HST
       const effectiveHst = (gstAmount === 0 && hstAmount === 0 && expense.tax_amount)
         ? expense.tax_amount
         : hstAmount;
       const totalTax = gstAmount + effectiveHst + pstAmount;
-      const taxRecoverable = gstAmount + effectiveHst; // Only GST + HST are ITC recoverable
 
-      // Payment source logic
+      const taxRecoverableEffective = getEffectiveRecoverableItcCad(expense);
+      const netExpenseCad = getNetExpenseCad(expense);
+      const itcSource = getItcSourceLabel(expense);
+
       const paymentSource = expense.payment_source === "company_card" ? "Company Card"
         : expense.payment_source === "personal_card" ? "Personal Card"
           : expense.payment_source === "bank_checking" ? "Bank / Checking"
@@ -3093,10 +3106,9 @@ export const exportApi = {
         ? expense.cad_amount || 0
         : 0;
 
-      // Jurisdiction
-      const jurisdiction = expense.currency === "USD" ? "USA" : "Canada";
+      const cur = (expense.original_currency || expense.currency || "CAD").toUpperCase();
+      const jurisdiction = cur === "USD" || expense.jurisdiction === "usa" ? "USA" : "Canada";
 
-      // Notes
       const notes = deductionRate < 1.0
         ? `${(deductionRate * 100).toFixed(0)}% deductible`
         : "";
@@ -3106,14 +3118,16 @@ export const exportApi = {
         "Vendor": expense.vendor_name || "",
         "Category": category.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase()),
         "Original Amount": expense.original_amount || expense.cad_amount || 0,
-        "Currency": expense.currency || "CAD",
+        "Currency": expense.currency || expense.original_currency || "CAD",
         "Exchange Rate": expense.exchange_rate !== 1.0 ? expense.exchange_rate?.toFixed(4) : "N/A",
         "CAD Amount": expense.cad_amount || 0,
+        "Net Expense (CAD)": netExpenseCad,
         "GST (5%)": gstAmount,
         "HST (13-15%)": effectiveHst,
         "PST (6-10%)": pstAmount,
         "Total Tax": totalTax,
-        "Tax Recoverable (ITC)": taxRecoverable,
+        "Tax Recoverable (ITC)": taxRecoverableEffective,
+        "ITC Source": itcSource,
         "Deductible Amount": Math.round(deductibleAmount * 100) / 100,
         "Deduction Rate": `${(deductionRate * 100).toFixed(0)}%`,
         "Card Last 4": expense.card_last_4 || "",
@@ -3141,11 +3155,13 @@ export const exportApi = {
       { wch: 8 },   // Currency
       { wch: 12 },  // Exchange Rate
       { wch: 12 },  // CAD Amount
+      { wch: 14 },  // Net Expense (CAD)
       { wch: 10 },  // GST (5%)
       { wch: 12 },  // HST (13-15%)
       { wch: 10 },  // PST (6-10%)
       { wch: 10 },  // Total Tax
-      { wch: 15 },  // Tax Recoverable
+      { wch: 16 },  // Tax Recoverable (ITC)
+      { wch: 16 },  // ITC Source
       { wch: 15 },  // Deductible Amount
       { wch: 12 },  // Deduction Rate
       { wch: 10 },  // Card Last 4
@@ -3211,41 +3227,44 @@ export const exportApi = {
       { wch: 30 },  // Notes
     ];
 
-    // ===== SUMMARY SHEET =====
+    // ===== SUMMARY SHEET (operating expenses excl. reclassified; net = gross − effective ITC) =====
     const expensesForPnl = expenses.filter((e) => !isExpenseReclassifiedToAsset(e));
-    const totalExpensesCAD = expensesForPnl.reduce((sum, e) => sum + (e.cad_amount || 0), 0);
-    const totalGST = expenses.reduce((sum, e) => sum + (e.gst_amount || 0), 0);
-    const totalHST = expenses.reduce((sum, e) => {
-      // Backward compatibility: use tax_amount if no separate hst_amount
+    const totalNetExpensesCAD = expensesForPnl.reduce((sum, e) => sum + getNetExpenseCad(e), 0);
+    const totalGrossOperatingCAD = expensesForPnl.reduce((sum, e) => sum + (e.cad_amount || 0), 0);
+    const totalItcEffective = expensesForPnl.reduce((sum, e) => sum + getEffectiveRecoverableItcCad(e), 0);
+    const totalGSTRecorded = expensesForPnl.reduce((sum, e) => sum + (e.gst_amount || 0), 0);
+    const totalHSTRecorded = expensesForPnl.reduce((sum, e) => {
       const hst = e.hst_amount || 0;
       const backwardHst = (e.gst_amount === 0 && hst === 0 && e.tax_amount) ? e.tax_amount : hst;
       return sum + backwardHst;
     }, 0);
-    const totalPST = expenses.reduce((sum, e) => sum + (e.pst_amount || 0), 0);
-    const totalTaxRecoverable = totalGST + totalHST; // Only GST + HST are ITC recoverable
+    const totalPST = expensesForPnl.reduce((sum, e) => sum + (e.pst_amount || 0), 0);
     const totalDeductible = expensesForPnl.reduce((sum, e) => {
       const cat = e.category || "uncategorized";
       const rate = DEDUCTION_RATES[cat] ?? 0.0;
       return sum + (e.cad_amount || 0) * rate;
     }, 0);
     const totalRevenueCAD = revenues.reduce((sum, r) => sum + (r.amount_cad || 0), 0);
-    const netProfit = totalRevenueCAD - totalExpensesCAD;
+    const netProfit = totalRevenueCAD - totalNetExpensesCAD;
 
     const summaryData = [
       { "Metric": "Gross Revenue (CAD)", "Value": totalRevenueCAD.toFixed(2) },
-      { "Metric": "Total Expenses (CAD)", "Value": totalExpensesCAD.toFixed(2) },
+      { "Metric": "Total Expenses (CAD) — net of recoverable GST/HST (ITC)", "Value": totalNetExpensesCAD.toFixed(2) },
+      { "Metric": "Gross Operating Expenses (CAD) — before ITC", "Value": totalGrossOperatingCAD.toFixed(2) },
       { "Metric": "Net Profit (CAD)", "Value": netProfit.toFixed(2) },
       { "Metric": "", "Value": "" },
-      { "Metric": "GST (5%) - Federal Tax", "Value": totalGST.toFixed(2) },
-      { "Metric": "HST (13-15%) - Harmonized Tax", "Value": totalHST.toFixed(2) },
-      { "Metric": "PST (6-10%) - Provincial Tax", "Value": totalPST.toFixed(2) },
-      { "Metric": "Total GST+HST Recoverable (ITC)", "Value": totalTaxRecoverable.toFixed(2) },
-      { "Metric": "Total All Taxes", "Value": (totalGST + totalHST + totalPST).toFixed(2) },
+      { "Metric": "Total GST+HST Recoverable (ITC) — asset", "Value": totalItcEffective.toFixed(2) },
+      { "Metric": "PST (6-10%) — not recoverable (sunk; in net expense)", "Value": totalPST.toFixed(2) },
+      { "Metric": "", "Value": "" },
+      { "Metric": "Recorded GST (5%) — line items", "Value": totalGSTRecorded.toFixed(2) },
+      { "Metric": "Recorded HST (13-15%) — line items", "Value": totalHSTRecorded.toFixed(2) },
+      { "Metric": "Recorded taxes sum (GST+HST+PST)", "Value": (totalGSTRecorded + totalHSTRecorded + totalPST).toFixed(2) },
       { "Metric": "", "Value": "" },
       { "Metric": "Tax Deductions (T2125)", "Value": totalDeductible.toFixed(2) },
       { "Metric": "", "Value": "" },
-      { "Metric": "Total Expense Count", "Value": expenses.length.toString() },
-      { "Metric": "Total Revenue Count", "Value": revenues.length.toString() },
+      { "Metric": "Expense rows (export)", "Value": expenses.length.toString() },
+      { "Metric": "Operating rows (excl. reclassified to asset)", "Value": expensesForPnl.length.toString() },
+      { "Metric": "Revenue rows", "Value": revenues.length.toString() },
     ];
 
     const summarySheet = XLSX.utils.json_to_sheet(summaryData);

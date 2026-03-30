@@ -14,6 +14,7 @@ import pandas as pd
 from database import get_db
 from models import User, Expense, ExpenseCategory
 from routers.auth import get_current_user
+from bc_expense_tax import effective_recoverable_itc_cad, itc_source_label, net_expense_cad
 
 router = APIRouter()
 
@@ -108,11 +109,14 @@ async def export_csv(
         "Original Currency",
         "Original Amount",
         "Exchange Rate (BOC)",
-        "CAD Equivalent Amount",  # PRIMARY COLUMN
-        "GST (5%)",              # Federal tax - ITC recoverable
-        "HST (13-15%)",          # Harmonized tax - ITC recoverable
-        "PST (6-10%)",           # Provincial tax - NOT recoverable
-        "Total Tax",             # Sum of GST + HST + PST
+        "CAD Equivalent Amount",  # Gross (bank / receipt)
+        "Net Expense (CAD)",      # Gross − Tax Recoverable (ITC); PST remains
+        "GST (5%)",               # Recorded federal component
+        "HST (13-15%)",           # Recorded harmonized component
+        "PST (6-10%)",            # Provincial — not recoverable
+        "Total Tax",              # Sum of recorded GST + HST + PST
+        "Tax Recoverable (ITC)",  # Effective ITC (dashboard logic)
+        "ITC Source",             # Auto-Estimated | Manual / Receipt
         "Payment Source",
         "Due to Shareholder",
         "Jurisdiction",
@@ -140,12 +144,18 @@ async def export_csv(
         # Exchange rate display
         exchange_rate = f"{expense.exchange_rate:.4f}" if expense.exchange_rate and expense.exchange_rate != 1.0 else "N/A (CAD)"
         
-        # Calculate total tax from components
         gst = expense.gst_amount or 0
         hst = expense.hst_amount or 0
         pst = expense.pst_amount or 0
-        total_tax = gst + hst + pst
-        
+        tax_amt = expense.tax_amount or 0
+        effective_hst = hst
+        if gst <= 1e-6 and hst <= 1e-6 and tax_amt > 1e-6:
+            effective_hst = tax_amt
+        total_tax = gst + effective_hst + pst
+        net_cad = net_expense_cad(expense)
+        itc_eff = effective_recoverable_itc_cad(expense)
+        itc_src = itc_source_label(expense)
+
         writer.writerow([
             expense.transaction_date.strftime("%Y-%m-%d") if expense.transaction_date else "",
             expense.vendor_name or "",
@@ -153,11 +163,14 @@ async def export_csv(
             expense.original_currency,
             f"{expense.original_amount:.2f}" if expense.original_amount else "",
             exchange_rate,
-            f"{expense.cad_amount:.2f}" if expense.cad_amount else "",  # PRIMARY VALUE
-            f"{gst:.2f}",               # GST only
-            f"{hst:.2f}",               # HST only
-            f"{pst:.2f}",               # PST only
-            f"{total_tax:.2f}",         # Total tax
+            f"{expense.cad_amount:.2f}" if expense.cad_amount else "",
+            f"{net_cad:.2f}",
+            f"{gst:.2f}",
+            f"{effective_hst:.2f}",
+            f"{pst:.2f}",
+            f"{total_tax:.2f}",
+            f"{itc_eff:.2f}",
+            itc_src,
             payment_source,
             due_to_shareholder,
             jurisdiction_display,
@@ -234,12 +247,18 @@ async def export_xlsx(
         if expense.category == ExpenseCategory.MEALS_ENTERTAINMENT:
             notes = f"50% deductible. {notes}".strip()
         
-        # Get individual tax amounts
         gst = expense.gst_amount or 0
         hst = expense.hst_amount or 0
         pst = expense.pst_amount or 0
-        total_tax = gst + hst + pst
-        
+        tax_amt = expense.tax_amount or 0
+        effective_hst = hst
+        if gst <= 1e-6 and hst <= 1e-6 and tax_amt > 1e-6:
+            effective_hst = tax_amt
+        total_tax = gst + effective_hst + pst
+        net_c = net_expense_cad(expense)
+        itc_e = effective_recoverable_itc_cad(expense)
+        itc_s = itc_source_label(expense)
+
         data.append({
             "Date": expense.transaction_date.strftime("%Y-%m-%d") if expense.transaction_date else "",
             "Vendor": expense.vendor_name or "",
@@ -247,11 +266,14 @@ async def export_xlsx(
             "Original Currency": expense.original_currency,
             "Original Amount": expense.original_amount or 0,
             "Exchange Rate (BOC)": expense.exchange_rate if expense.exchange_rate != 1.0 else None,
-            "CAD Equivalent Amount": expense.cad_amount or 0,  # PRIMARY VALUE
-            "GST (5%)": gst,                    # Federal tax - ITC recoverable
-            "HST (13-15%)": hst,                # Harmonized tax - ITC recoverable
-            "PST (6-10%)": pst,                 # Provincial tax - NOT recoverable
-            "Total Tax": total_tax,             # Sum of all taxes
+            "CAD Equivalent Amount": expense.cad_amount or 0,
+            "Net Expense (CAD)": net_c,
+            "GST (5%)": gst,
+            "HST (13-15%)": effective_hst,
+            "PST (6-10%)": pst,
+            "Total Tax": total_tax,
+            "Tax Recoverable (ITC)": itc_e,
+            "ITC Source": itc_s,
             "Payment Source": payment_source,
             "Due to Shareholder": due_to_shareholder,
             "Jurisdiction": jurisdiction_display,
@@ -266,27 +288,35 @@ async def export_xlsx(
     if not df.empty:
         summary = df.groupby("Category").agg({
             "CAD Equivalent Amount": ["count", "sum"],
+            "Net Expense (CAD)": "sum",
+            "Tax Recoverable (ITC)": "sum",
             "GST (5%)": "sum",
             "HST (13-15%)": "sum",
             "PST (6-10%)": "sum",
             "Total Tax": "sum"
         }).reset_index()
-        summary.columns = ["Category", "Receipt Count", "Total CAD", "Total GST", "Total HST", "Total PST", "Total Tax"]
+        summary.columns = [
+            "Category", "Receipt Count", "Total CAD Gross", "Total Net CAD",
+            "Total ITC", "Total GST", "Total HST", "Total PST", "Total Tax"
+        ]
         
         # Calculate 50% for meals
         meals_row = summary[summary["Category"] == "Meals Entertainment"]
         if not meals_row.empty:
-            meals_deductible = meals_row["Total CAD"].values[0] * 0.5
+            meals_deductible = meals_row["Total CAD Gross"].values[0] * 0.5
         else:
             meals_deductible = 0
     else:
-        summary = pd.DataFrame(columns=["Category", "Receipt Count", "Total CAD", "Total GST", "Total HST", "Total PST", "Total Tax"])
+        summary = pd.DataFrame(columns=[
+            "Category", "Receipt Count", "Total CAD Gross", "Total Net CAD",
+            "Total ITC", "Total GST", "Total HST", "Total PST", "Total Tax"
+        ])
         meals_deductible = 0
     
     # Due to Shareholder summary
     if not df.empty:
-        shareholder_summary = df[df["Due to Shareholder"] == "Yes"]["CAD Equivalent Amount"].sum()
-        company_summary = df[df["Due to Shareholder"] == "No"]["CAD Equivalent Amount"].sum()
+        shareholder_summary = df[df["Due to Shareholder"] == "Yes"]["Net Expense (CAD)"].sum()
+        company_summary = df[df["Due to Shareholder"] == "No"]["Net Expense (CAD)"].sum()
     else:
         shareholder_summary = 0
         company_summary = 0
@@ -309,23 +339,25 @@ async def export_xlsx(
         # Key figures sheet with separate tax totals
         key_figures = pd.DataFrame({
             "Metric": [
-                "Total Expenses (CAD)",
-                "Total GST (5%) - ITC Recoverable",
-                "Total HST (13-15%) - ITC Recoverable",
-                "Total PST (6-10%) - NOT Recoverable",
-                "Total GST+HST Recoverable (ITC)",
-                "Total All Taxes",
+                "Total Expenses (CAD) — net of recoverable GST/HST (ITC)",
+                "Gross Operating Expenses (CAD) — before ITC",
+                "Total GST+HST Recoverable (ITC) — asset",
+                "PST (6-10%) — not recoverable (sunk; in net expense)",
+                "Recorded GST (5%) — line items",
+                "Recorded HST (13-15%) — line items",
+                "Recorded taxes sum (GST+HST+PST)",
                 "Meals (50% Deductible)",
-                "Company Card Expenses",
-                "Due to Shareholder",
+                "Company Card (net CAD)",
+                "Due to Shareholder (net CAD)",
                 "Total Receipts"
             ],
             "Value": [
+                df["Net Expense (CAD)"].sum() if not df.empty else 0,
                 df["CAD Equivalent Amount"].sum() if not df.empty else 0,
+                df["Tax Recoverable (ITC)"].sum() if not df.empty else 0,
+                df["PST (6-10%)"].sum() if not df.empty else 0,
                 df["GST (5%)"].sum() if not df.empty else 0,
                 df["HST (13-15%)"].sum() if not df.empty else 0,
-                df["PST (6-10%)"].sum() if not df.empty else 0,
-                (df["GST (5%)"].sum() + df["HST (13-15%)"].sum()) if not df.empty else 0,
                 df["Total Tax"].sum() if not df.empty else 0,
                 meals_deductible,
                 company_summary,
@@ -335,18 +367,23 @@ async def export_xlsx(
         })
         key_figures.to_excel(writer, sheet_name='Key Figures', index=False)
         
-        # Add totals row to main sheet
+        # Add totals row to main sheet (column indices follow DataFrame column order)
         if not df.empty:
             ws = writer.sheets['Expenses']
             last_row = len(df) + 2
-            
             ws.cell(row=last_row, column=1, value="TOTALS")
-            ws.cell(row=last_row, column=5, value=df["Original Amount"].sum())
-            ws.cell(row=last_row, column=7, value=df["CAD Equivalent Amount"].sum())
-            ws.cell(row=last_row, column=8, value=df["GST (5%)"].sum())
-            ws.cell(row=last_row, column=9, value=df["HST (13-15%)"].sum())
-            ws.cell(row=last_row, column=10, value=df["PST (6-10%)"].sum())
-            ws.cell(row=last_row, column=11, value=df["Total Tax"].sum())
+            for col_idx, col_name in enumerate(df.columns, start=1):
+                if col_name in (
+                    "Original Amount",
+                    "CAD Equivalent Amount",
+                    "Net Expense (CAD)",
+                    "GST (5%)",
+                    "HST (13-15%)",
+                    "PST (6-10%)",
+                    "Total Tax",
+                    "Tax Recoverable (ITC)",
+                ):
+                    ws.cell(row=last_row, column=col_idx, value=df[col_name].sum())
     
     output.seek(0)
     

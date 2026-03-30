@@ -191,8 +191,20 @@ export function getEffectiveRecoverableItcCad(e: ExpenseItcMeta): number {
 }
 
 /** Net operating expense for P&L display: gross CAD − recoverable ITC (PST stays in gross). */
-export function getNetExpenseCad(e: ExpenseTaxFields): number {
+export function getNetExpenseCad(e: ExpenseItcMeta): number {
   const gross = e.cad_amount ?? 0;
   const itc = getEffectiveRecoverableItcCad(e);
   return roundMoney(Math.max(0, gross - itc));
+}
+
+/** Export / audit: whether ITC came from category auto-estimate vs receipt or manual entry. */
+export function getItcSourceLabel(e: ExpenseItcMeta): "Auto-Estimated" | "Manual / Receipt" {
+  if (e.gst_itc_estimated === true) return "Auto-Estimated";
+  if (e.gst_itc_estimated === false) return "Manual / Receipt";
+  if (expenseHasManualOrParsedTax(e)) return "Manual / Receipt";
+  const cur = (e.original_currency || e.currency || "CAD").toUpperCase();
+  if (cur === "USD" || !isCanadaJurisdiction(e.jurisdiction)) return "Manual / Receipt";
+  const gross = e.cad_amount ?? 0;
+  if (gross <= EPS) return "Manual / Receipt";
+  return "Auto-Estimated";
 }
