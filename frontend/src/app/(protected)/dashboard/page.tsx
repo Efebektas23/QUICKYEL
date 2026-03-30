@@ -481,7 +481,7 @@ export default function DashboardPage() {
                     currencyCode="US"
                     currencyColor="blue"
                     title="USD Revenue"
-                    subtitle={`${revenueSummary?.usd_count || 0} entries · $${(revenueSummary?.total_usd || 0).toLocaleString("en-CA", { minimumFractionDigits: 2 })} USD`}
+                    subtitle={`${revenueSummary?.usd_count || 0} entries · ${formatCurrency(revenueSummary?.total_usd || 0, "USD")}`}
                     amount={formatCurrency(revenueSummary?.total_usd_converted_cad || 0)}
                     amountSub="converted CAD"
                     isExpanded={drillDown === "usd_revenue"}
@@ -551,7 +551,7 @@ export default function DashboardPage() {
                     currencyCode="US"
                     currencyColor="blue"
                     title="USD Expenses"
-                    subtitle={`${summary?.by_currency?.usd?.count || 0} entries · $${(summary?.by_currency?.usd?.original_total || 0).toLocaleString("en-CA", { minimumFractionDigits: 2 })} USD`}
+                    subtitle={`${summary?.by_currency?.usd?.count || 0} entries · ${formatCurrency(summary?.by_currency?.usd?.original_total || 0, "USD")}`}
                     amount={formatCurrency(summary?.by_currency?.usd?.converted_cad || 0)}
                     amountSub={`avg rate: ${(summary?.by_currency?.usd?.avg_rate || 0).toFixed(4)}`}
                     isExpanded={drillDown === "usd_expense"}
@@ -1351,7 +1351,7 @@ function CurrencyDrillDown({
                     <p className="text-sm font-semibold text-white">{formatCurrency(item.amount)}</p>
                     {item.currency === "USD" && item.exchangeRate && (
                       <p className="text-[10px] text-slate-500">
-                        ${item.originalAmount.toFixed(2)} USD × {item.exchangeRate.toFixed(4)}
+                        {formatCurrency(item.originalAmount, "USD")} × {item.exchangeRate.toFixed(4)}
                       </p>
                     )}
                   </div>

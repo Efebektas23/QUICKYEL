@@ -373,7 +373,7 @@ export default function ExpensesPage() {
               setSearchQuery(e.target.value);
               setPage(1);
             }}
-            placeholder="Search by vendor, amount ($1,250), date, memo, category..."
+            placeholder="Search by vendor, amount (1,250 CAD), date, memo, category..."
             className="flex-1 bg-transparent text-white placeholder-slate-500 px-3 py-3 md:py-3.5 text-sm md:text-base outline-none"
             id="expense-search-input"
           />
@@ -395,7 +395,7 @@ export default function ExpensesPage() {
         {/* Search hint */}
         {!isSearchActive && (
           <p className="text-xs text-slate-600 mt-1.5 ml-1 hidden md:block">
-            💡 Try: vendor name, <span className="text-slate-500">&quot;$1,250&quot;</span>, <span className="text-slate-500">&quot;1000-2000&quot;</span>, <span className="text-slate-500">&quot;{'>'}500&quot;</span>, date, or memo keywords
+            💡 Try: vendor name, <span className="text-slate-500">&quot;1,250 CAD&quot;</span>, <span className="text-slate-500">&quot;1000-2000&quot;</span>, <span className="text-slate-500">&quot;{'>'}500&quot;</span>, date, or memo keywords
           </p>
         )}
         {/* No results message */}

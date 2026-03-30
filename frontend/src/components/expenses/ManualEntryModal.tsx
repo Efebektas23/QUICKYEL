@@ -299,7 +299,9 @@ export function ManualEntryModal({ isOpen, onClose, onSuccess }: ManualEntryModa
               </label>
               <div className="flex gap-2">
                 <div className="relative flex-1">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">$</span>
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-xs font-medium w-8">
+                    {formData.currency}
+                  </span>
                   <input
                     type="number"
                     step="0.01"
@@ -307,7 +309,7 @@ export function ManualEntryModal({ isOpen, onClose, onSuccess }: ManualEntryModa
                     value={formData.amount}
                     onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
                     placeholder="0.00"
-                    className="input w-full pl-8"
+                    className="input w-full pl-11"
                     required
                   />
                 </div>
@@ -358,7 +360,7 @@ export function ManualEntryModal({ isOpen, onClose, onSuccess }: ManualEntryModa
                     />
                     <span className="text-slate-400">=</span>
                     <span className="text-lg font-semibold text-green-400">
-                      ${cadAmount.toFixed(2)} CAD
+                      {cadAmount.toFixed(2)} CAD
                     </span>
                   </div>
                 </div>

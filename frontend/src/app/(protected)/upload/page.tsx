@@ -483,7 +483,7 @@ export default function UploadPage() {
                                   </div>
                                   <div className="flex-shrink-0 text-right">
                                     <span className="text-lg font-bold text-white">
-                                      ${record.amount.toFixed(2)}
+                                      {formatCurrency(record.amount, "CAD")}
                                     </span>
                                     <div className="mt-0.5">
                                       <span className={cn(

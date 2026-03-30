@@ -17,14 +17,13 @@ export function formatCurrency(
     : "CAD";
 
   try {
-    return new Intl.NumberFormat("en-CA", {
-      style: "currency",
-      currency: validCurrency,
+    const formatted = new Intl.NumberFormat("en-CA", {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     }).format(amount);
+    return `${formatted} ${validCurrency}`;
   } catch {
-    return `$${amount.toFixed(2)} ${validCurrency}`;
+    return `${amount.toFixed(2)} ${validCurrency}`;
   }
 }
 

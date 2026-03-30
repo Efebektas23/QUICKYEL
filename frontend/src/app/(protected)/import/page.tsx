@@ -72,7 +72,7 @@ export default function ImportPage() {
       queryClient.invalidateQueries({ queryKey: ["revenues"] });
       queryClient.invalidateQueries({ queryKey: ["summary"] });
       toast.success(
-        `Cleaned up: ${result.expenses_deleted} bad expenses, ${result.revenues_deleted} bad revenues removed ($${result.total_amount_removed.toLocaleString()} CAD)`,
+        `Cleaned up: ${result.expenses_deleted} bad expenses, ${result.revenues_deleted} bad revenues removed (${formatCurrency(result.total_amount_removed, "CAD")})`,
         { id: "cleanup", duration: 8000 }
       );
     } catch (error: any) {
@@ -186,7 +186,7 @@ export default function ImportPage() {
             {cleanupResult.revenues_deleted > 0 && (
               <p>{cleanupResult.revenues_deleted} misclassified revenues removed (credit card payments, internal transfers)</p>
             )}
-            <p className="text-amber-400">Total removed: ${cleanupResult.total_amount_removed.toLocaleString(undefined, { minimumFractionDigits: 2 })} CAD</p>
+            <p className="text-amber-400">Total removed: {formatCurrency(cleanupResult.total_amount_removed, "CAD")}</p>
             <p className="text-xs text-slate-500 mt-2">You can now re-import your CSV files to get correctly categorized data.</p>
           </div>
         </div>
@@ -355,8 +355,8 @@ function DataManagementSection() {
     const confirmed = confirm(
       `⚠️ DANGER: You are about to permanently delete:\n\n` +
       `Period: ${periodLabel}\n` +
-      `• ${preview.expenses_count} expenses ($${preview.expenses_total.toLocaleString()} CAD)\n` +
-      `• ${preview.revenues_count} revenues ($${preview.revenues_total.toLocaleString()} CAD)\n` +
+      `• ${preview.expenses_count} expenses (${formatCurrency(preview.expenses_total, "CAD")})\n` +
+      `• ${preview.revenues_count} revenues (${formatCurrency(preview.revenues_total, "CAD")})\n` +
       `• ${preview.fingerprints_count} import fingerprints\n\n` +
       `This action CANNOT be undone!\n\nType OK to proceed.`
     );
@@ -461,12 +461,12 @@ function DataManagementSection() {
                 <div className="p-3 rounded-xl bg-red-500/5 border border-red-500/20">
                   <p className="text-xs text-slate-500 mb-1">Expenses to Delete</p>
                   <p className="text-lg font-bold text-red-400">{preview.expenses_count}</p>
-                  <p className="text-xs text-slate-400">${preview.expenses_total.toLocaleString(undefined, { minimumFractionDigits: 2 })} CAD</p>
+                  <p className="text-xs text-slate-400">{formatCurrency(preview.expenses_total, "CAD")}</p>
                 </div>
                 <div className="p-3 rounded-xl bg-emerald-500/5 border border-emerald-500/20">
                   <p className="text-xs text-slate-500 mb-1">Revenues to Delete</p>
                   <p className="text-lg font-bold text-emerald-400">{preview.revenues_count}</p>
-                  <p className="text-xs text-slate-400">${preview.revenues_total.toLocaleString(undefined, { minimumFractionDigits: 2 })} CAD</p>
+                  <p className="text-xs text-slate-400">{formatCurrency(preview.revenues_total, "CAD")}</p>
                 </div>
               </div>
               <div className="p-3 rounded-xl bg-slate-800/50 border border-slate-700 text-center">
@@ -509,8 +509,8 @@ function DataManagementSection() {
                 <span className="font-semibold">Deletion Complete</span>
               </div>
               <div className="text-sm text-slate-300 space-y-1">
-                <p><span className="text-red-400 font-bold">{deleteResult.expenses_deleted}</span> expenses deleted (${deleteResult.total_expenses_amount.toLocaleString()} CAD)</p>
-                <p><span className="text-emerald-400 font-bold">{deleteResult.revenues_deleted}</span> revenues deleted (${deleteResult.total_revenues_amount.toLocaleString()} CAD)</p>
+                <p><span className="text-red-400 font-bold">{deleteResult.expenses_deleted}</span> expenses deleted ({formatCurrency(deleteResult.total_expenses_amount, "CAD")})</p>
+                <p><span className="text-emerald-400 font-bold">{deleteResult.revenues_deleted}</span> revenues deleted ({formatCurrency(deleteResult.total_revenues_amount, "CAD")})</p>
                 <p><span className="text-blue-400 font-bold">{deleteResult.fingerprints_deleted}</span> import fingerprints cleared</p>
                 <p className="text-xs text-amber-400 mt-3">You can now re-import your CSV/PDF files for correctly categorized data.</p>
               </div>

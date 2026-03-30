@@ -712,8 +712,8 @@ function AddRevenueModal({
               </label>
               <div className="flex gap-2">
                 <div className="relative flex-1">
-                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500">
-                    {formData.currency === "CAD" ? "C$" : "$"}
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 text-xs font-medium">
+                    {formData.currency}
                   </span>
                   <input
                     type="number"
@@ -721,7 +721,7 @@ function AddRevenueModal({
                     value={formData.amount}
                     onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
                     placeholder="0.00"
-                    className="input-field pl-10"
+                    className="input-field pl-14"
                     required
                   />
                 </div>
@@ -772,8 +772,8 @@ function AddRevenueModal({
                   <span className="text-slate-400">=</span>
                   <span className="text-lg font-bold text-emerald-500">
                     {formatCurrency(
-                      parseFloat(formData.amount || "0") * parseFloat(formData.exchange_rate || "1")
-                    )} CAD
+                      parseFloat(formData.amount || "0") * parseFloat(formData.exchange_rate || "1"),
+                    )}
                   </span>
                 </div>
               </div>

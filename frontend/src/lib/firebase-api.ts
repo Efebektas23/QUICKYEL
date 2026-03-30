@@ -1042,7 +1042,7 @@ export const expensesApi = {
               ? (typeof matchData.transaction_date === "string" ? matchData.transaction_date.substring(0, 10) : "")
               : "";
 
-            console.log(`⚠️ Duplicate receipt detected (score: ${bestMatchDoc.score})! Matches expense ${bestMatchDoc.id}: ${matchData.vendor_name} $${matchAmount}`);
+            console.log(`⚠️ Duplicate receipt detected (score: ${bestMatchDoc.score})! Matches expense ${bestMatchDoc.id}: ${matchData.vendor_name} ${matchAmount.toFixed(2)} CAD`);
 
             // Clean up: delete uploaded images and placeholder expense
             for (const url of imageUrls) {
@@ -1058,7 +1058,7 @@ export const expensesApi = {
             const similarRecordsJson = JSON.stringify(similarRecords.slice(0, 5)); // Max 5 records
             throw new Error(
               `DUPLICATE_RECEIPT: This receipt appears to have been uploaded before. ` +
-              `Matching expense: ${matchData.vendor_name || "Unknown"} - $${matchAmount.toFixed(2)} on ${matchDate}` +
+              `Matching expense: ${matchData.vendor_name || "Unknown"} - ${matchAmount.toFixed(2)} CAD on ${matchDate}` +
               `|||SIMILAR_RECORDS:${similarRecordsJson}`
             );
           }
@@ -2201,7 +2201,7 @@ export const bankImportApi = {
           reasons.push("exact amount");
         } else if (amountDiff < 1.0) {
           score += 40; // Within $1 (rounding differences)
-          reasons.push(`amount ±$${amountDiff.toFixed(2)}`);
+          reasons.push(`amount ±${amountDiff.toFixed(2)} CAD`);
         } else if (amountPercent < 2) {
           score += 25; // Within 2% (tax/tip differences)
           reasons.push(`amount ~${amountPercent.toFixed(1)}% diff`);
@@ -3548,7 +3548,7 @@ export const assetsApi = {
     // 2. Create asset record
     const assetId = await assetsApi.create({
       name: assetName,
-      description: `Converted from expense: ${expense.vendor_name} — $${purchaseCost.toLocaleString()}`,
+      description: `Converted from expense: ${expense.vendor_name} — ${purchaseCost.toLocaleString("en-CA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} CAD`,
       cca_class: ccaClass,
       purchase_date: purchaseDate,
       purchase_cost: purchaseCost,
@@ -3564,7 +3564,7 @@ export const assetsApi = {
     // 3. Mark expense as reclassified (keep it for audit trail)
     await expensesApi.update(expenseId, {
       category: "uncategorized",
-      notes: `[RECLASSIFIED TO ASSET] Asset ID: ${assetId}. Original amount: $${purchaseCost.toLocaleString()}. This expense has been reclassified as a depreciable asset for CRA compliance.${expense.notes ? ` | Original notes: ${expense.notes}` : ""}`,
+      notes: `[RECLASSIFIED TO ASSET] Asset ID: ${assetId}. Original amount: ${purchaseCost.toLocaleString("en-CA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} CAD. This expense has been reclassified as a depreciable asset for CRA compliance.${expense.notes ? ` | Original notes: ${expense.notes}` : ""}`,
       is_verified: true,
     } as any);
 

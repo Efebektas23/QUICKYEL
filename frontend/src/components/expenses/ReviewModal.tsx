@@ -515,7 +515,7 @@ export function ReviewModal({
                   />
                   {expense.original_currency === "USD" && (
                     <p className="text-sm text-slate-500 mt-1">
-                      = {formatCurrency(watch("original_amount") * expense.exchange_rate)} CAD
+                      = {formatCurrency(watch("original_amount") * expense.exchange_rate)}
                     </p>
                   )}
                 </div>
@@ -628,7 +628,10 @@ export function ReviewModal({
                     <div className="flex justify-between items-center p-2 rounded bg-slate-800/30">
                       <span className="text-sm text-slate-400">Total Tax:</span>
                       <span className="text-sm font-semibold text-white">
-                        ${((watch("gst_amount") || 0) + (watch("hst_amount") || 0) + (watch("pst_amount") || 0)).toFixed(2)}
+                        {formatCurrency(
+                          (watch("gst_amount") || 0) + (watch("hst_amount") || 0) + (watch("pst_amount") || 0),
+                          "CAD",
+                        )}
                       </span>
                     </div>
                   </div>

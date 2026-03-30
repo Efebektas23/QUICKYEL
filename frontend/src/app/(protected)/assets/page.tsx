@@ -840,14 +840,14 @@ function AddAssetModal({
           </FormField>
           <FormField label="Purchase Cost (CAD) *">
             <div className="relative">
-              <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500">$</span>
+              <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 text-xs font-medium">CAD</span>
               <input
                 type="number"
                 step="0.01"
                 value={formData.purchase_cost}
                 onChange={(e) => setFormData({ ...formData, purchase_cost: e.target.value })}
                 placeholder="0.00"
-                className="input-field pl-8"
+                className="input-field pl-14"
                 required
               />
             </div>

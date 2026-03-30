@@ -4,7 +4,7 @@
  * Implements Canadian Revenue Agency rules for depreciable asset amortization:
  * - Declining balance method
  * - Half-year rule for acquisition year
- * - Class 10.1 cost ceiling ($38,000 + tax for 2025)
+ * - Class 10.1 cost ceiling (38,000 CAD + tax for 2025)
  * - UCC (Undepreciated Capital Cost) tracking
  * 
  * Reference: CRA IT-478R2, Income Tax Folio S3-F4-C1
@@ -53,7 +53,7 @@ export const CCA_CLASSES: Record<string, CCAClassDef> = {
     description: "Passenger vehicles exceeding CRA prescribed cost",
     method: "declining_balance",
     costCeiling: 38000,
-    costCeilingNote: "$38,000 + applicable taxes (2025 limit)",
+    costCeilingNote: "38,000 CAD + applicable taxes (2025 limit)",
     examples: [
       "Luxury passenger vehicles", "Honda CR-V (if over limit)",
       "SUVs over CRA limit",
@@ -62,7 +62,7 @@ export const CCA_CLASSES: Record<string, CCAClassDef> = {
   class_12: {
     id: "class_12",
     rate: 1.00,
-    description: "Computer software, tools < $500, dies, moulds",
+    description: "Computer software, tools under 500 CAD, dies, moulds",
     method: "declining_balance",
     examples: ["Software licenses", "Small tools", "Kitchen utensils"],
   },
@@ -96,7 +96,7 @@ export const CCA_CLASSES: Record<string, CCAClassDef> = {
     description: "Zero-emission passenger vehicles (over limit)",
     method: "declining_balance",
     costCeiling: 61000,
-    costCeilingNote: "$61,000 + applicable taxes (2025 limit)",
+    costCeilingNote: "61,000 CAD + applicable taxes (2025 limit)",
     examples: ["Tesla Model 3", "Hyundai Ioniq 5", "Zero-emission SUVs"],
   },
 };
@@ -144,7 +144,7 @@ export interface Asset {
 
 /**
  * Get the adjusted cost base for an asset, applying class-specific ceilings.
- * For Class 10.1, the depreciable amount is capped at $38,000 + applicable taxes.
+ * For Class 10.1, the depreciable amount is capped at 38,000 CAD + applicable taxes.
  */
 export function getAdjustedCost(purchaseCost: number, ccaClassId: string): number {
   const ccaClass = CCA_CLASSES[ccaClassId];
@@ -247,7 +247,7 @@ export function generateUCCSchedule(
 
     currentUCC = closingUCC;
 
-    // If UCC drops below $1, stop generating
+    // If UCC drops below 1 CAD, stop generating
     if (currentUCC < 1) break;
   }
 
