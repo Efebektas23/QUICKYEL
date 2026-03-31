@@ -4,10 +4,10 @@ import { useEffect, useRef } from "react";
 import { ensureAuth } from "@/lib/firebase";
 import { expensesApi } from "@/lib/firebase-api";
 
-const STORAGE_KEY = "quickyel_usd_itc_gate_v1";
+const STORAGE_KEY = "quickyel_tax_compliance_gate_v2";
 
 /**
- * Runs once per browser after deploy: clears invalid Canadian ITC on USD/USA expenses.
+ * Runs once per browser after deploy: clears USD tax rows and legacy gst_itc_estimated CAD rows.
  */
 export function UsdItcSanitizeOnLoad() {
   const started = useRef(false);
@@ -30,7 +30,7 @@ export function UsdItcSanitizeOnLoad() {
         }
         if (updated > 0) {
           console.info(
-            `[QuickYel] USD/USA ITC compliance: corrected ${updated} expense(s); Canadian ITC is not auto-estimated for US transactions.`,
+            `[QuickYel] Tax compliance: updated ${updated} expense(s) (USD tax strip / legacy CAD ITC estimate removal).`,
           );
         }
       } catch (e) {

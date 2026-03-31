@@ -18,7 +18,6 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { expensesApi, revenueApi, storageApi, cardsApi } from "@/lib/firebase-api";
-import { computeBcItcAutoFieldsFromGross } from "@/lib/bc-expense-tax";
 import { EXPENSE_CATEGORIES, getCategoryTooltip } from "@/lib/categories";
 import { cn } from "@/lib/utils";
 
@@ -116,12 +115,6 @@ export function ManualEntryModal({ isOpen, onClose, onSuccess }: ManualEntryModa
         : amountOriginal * exchangeRate;
       const amountCadRounded = Math.round(amountCad * 100) / 100;
       const jurisdiction = formData.currency === "USD" ? "usa" : "canada";
-      const itcAuto = computeBcItcAutoFieldsFromGross(
-        formData.category,
-        amountCadRounded,
-        jurisdiction,
-        formData.currency,
-      );
 
       // Upload proof file if provided
       let proofImageUrl: string | null = null;
@@ -147,21 +140,11 @@ export function ManualEntryModal({ isOpen, onClose, onSuccess }: ManualEntryModa
         original_amount: amountOriginal,
         original_currency: formData.currency,
         currency: formData.currency,
-        ...(itcAuto
-          ? {
-              tax_amount: itcAuto.tax_amount,
-              gst_amount: itcAuto.gst_amount,
-              hst_amount: 0,
-              pst_amount: 0,
-              gst_itc_estimated: itcAuto.gst_itc_estimated,
-            }
-          : {
-              tax_amount: 0,
-              gst_amount: 0,
-              hst_amount: 0,
-              pst_amount: 0,
-              gst_itc_estimated: false,
-            }),
+        tax_amount: 0,
+        gst_amount: 0,
+        hst_amount: 0,
+        pst_amount: 0,
+        gst_itc_estimated: false,
         exchange_rate: exchangeRate,
         cad_amount: amountCadRounded,
         card_last_4: selectedCardLast4 || null,

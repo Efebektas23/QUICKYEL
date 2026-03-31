@@ -18,7 +18,6 @@ import {
   Search,
   ChevronDown,
   ChevronUp,
-  Wand2,
 } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { useQuery } from "@tanstack/react-query";
@@ -613,17 +612,6 @@ export function ReviewModal({
                       <div className="mb-3">
                         <label className="flex items-center gap-2 text-sm font-medium text-slate-300 mb-1">
                           GST (5%) — recoverable (ITC)
-                          {expense.gst_itc_estimated && (
-                            <span
-                              className="inline-flex items-center gap-1 text-amber-400"
-                              title="Estimated GST based on category tax rules."
-                            >
-                              <Wand2 className="w-3.5 h-3.5 shrink-0" aria-hidden />
-                              <span className="text-[10px] font-normal uppercase tracking-wide">
-                                Estimated
-                              </span>
-                            </span>
-                          )}
                         </label>
                         <input
                           type="number"

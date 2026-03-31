@@ -37,14 +37,11 @@ import {
   type UCCScheduleEntry,
 } from "./cca-engine";
 import {
-  computeBcItcAutoFieldsFromGross,
-  expenseHasManualOrParsedTax,
   expenseIsUsdPayment,
   getEffectiveRecoverableItcCad,
   getItcSourceLabel,
   getNetExpenseCad,
   mergeBcItcForCategoryChange,
-  shouldBypassCanadianItcEstimation,
   storedCanadianTaxForDisplay,
   usdPaymentZeroTaxWritePatch,
 } from "./bc-expense-tax";
@@ -635,7 +632,7 @@ export const expensesApi = {
   },
 
   /**
-   * Change category and refresh BC ITC estimate when the row is still system-estimated or has no manual tax.
+   * Change category; clears legacy system-estimated tax (no category-based ITC).
    */
   updateCategoryWithItc: async (id: string, category: string): Promise<void> => {
     const existing = await expensesApi.get(id);
@@ -645,7 +642,7 @@ export const expensesApi = {
   },
 
   /**
-   * Verify expense; applies BC ITC estimate when taxes are still blank (bank imports).
+   * Verify expense; strips legacy system-estimated tax (no gross/category ITC).
    */
   verify: async (id: string): Promise<void> => {
     await ensureAuth();
@@ -659,33 +656,8 @@ export const expensesApi = {
     if (exp) {
       if (expenseIsUsdPayment(exp)) {
         Object.assign(patch, usdPaymentZeroTaxWritePatch());
-      } else if (exp.gst_itc_estimated === false) {
-        /* keep taxes — user or receipt is authoritative */
       } else if (exp.gst_itc_estimated === true) {
-        if (shouldBypassCanadianItcEstimation(exp.original_currency || exp.currency, exp.jurisdiction)) {
-          Object.assign(patch, {
-            gst_amount: 0,
-            hst_amount: 0,
-            tax_amount: 0,
-            gst_itc_estimated: false,
-          });
-        } else {
-          const itc = computeBcItcAutoFieldsFromGross(
-            exp.category,
-            exp.cad_amount ?? 0,
-            exp.jurisdiction,
-            exp.original_currency || exp.currency,
-          );
-          if (itc) Object.assign(patch, itc);
-        }
-      } else if (!expenseHasManualOrParsedTax(exp)) {
-        const itc = computeBcItcAutoFieldsFromGross(
-          exp.category,
-          exp.cad_amount ?? 0,
-          exp.jurisdiction,
-          exp.original_currency || exp.currency,
-        );
-        if (itc) Object.assign(patch, itc);
+        Object.assign(patch, usdPaymentZeroTaxWritePatch());
       }
     }
     // Firestore UpdateData is stricter than our dynamic patch shape
@@ -693,7 +665,7 @@ export const expensesApi = {
   },
 
   /**
-   * Fix historical USD-paid expenses that still carry Canadian tax or ITC estimate flags.
+   * One-time cleanup: USD rows with Canadian tax fields, and CAD rows with legacy gst_itc_estimated.
    * Idempotent.
    */
   sanitizeUsdAutoEstimatedItc: async (): Promise<{ updated: number }> => {
@@ -716,7 +688,7 @@ export const expensesApi = {
     };
 
     const now = Timestamp.fromDate(new Date());
-    const taxDirty = (d: Record<string, unknown>) =>
+    const usdTaxDirty = (d: Record<string, unknown>) =>
       (Number(d.gst_amount) || 0) > 1e-6 ||
       (Number(d.hst_amount) || 0) > 1e-6 ||
       (Number(d.pst_amount) || 0) > 1e-6 ||
@@ -726,7 +698,10 @@ export const expensesApi = {
     for (const docSnap of snapshot.docs) {
       const data = docSnap.data();
       const cur = (data.original_currency || data.currency || "CAD").toUpperCase();
-      if (cur !== "USD" || !taxDirty(data)) continue;
+      const isUsd = cur === "USD";
+      const needsUsdFix = isUsd && usdTaxDirty(data);
+      const needsCadEstClear = !isUsd && data.gst_itc_estimated === true;
+      if (!needsUsdFix && !needsCadEstClear) continue;
 
       batch.update(docSnap.ref, {
         ...usdPaymentZeroTaxWritePatch(),
@@ -2568,23 +2543,7 @@ export const bankImportApi = {
             }
 
             const jurisdiction = isUsd ? "usa" : "canada";
-            const taxPersist = (() => {
-              if (isUsd) return usdPaymentZeroTaxWritePatch();
-              const auto = computeBcItcAutoFieldsFromGross(
-                tx.category || "uncategorized",
-                cadAmount,
-                jurisdiction,
-                currency,
-              );
-              if (!auto) return usdPaymentZeroTaxWritePatch();
-              return {
-                gst_amount: auto.gst_amount,
-                hst_amount: 0,
-                pst_amount: 0,
-                tax_amount: auto.tax_amount,
-                gst_itc_estimated: auto.gst_itc_estimated,
-              };
-            })();
+            const taxPersist = usdPaymentZeroTaxWritePatch();
             await addDoc(collection(db, EXPENSES_COLLECTION), {
               vendor_name: tx.vendor_name || tx.description1,
               transaction_date: tx.transaction_date,
@@ -2844,23 +2803,7 @@ export const factoringApi = {
           const cadRounded = Math.round(cadAmount * 100) / 100;
           const isUsdFact = currency === "USD";
           const jurFact = isUsdFact ? "usa" : "canada";
-          const taxFact = (() => {
-            if (isUsdFact) return usdPaymentZeroTaxWritePatch();
-            const auto = computeBcItcAutoFieldsFromGross(
-              "factoring_fees",
-              cadRounded,
-              jurFact,
-              currency,
-            );
-            if (!auto) return usdPaymentZeroTaxWritePatch();
-            return {
-              gst_amount: auto.gst_amount,
-              hst_amount: 0,
-              pst_amount: 0,
-              tax_amount: auto.tax_amount,
-              gst_itc_estimated: auto.gst_itc_estimated,
-            };
-          })();
+          const taxFact = usdPaymentZeroTaxWritePatch();
 
           await addDoc(collection(db, EXPENSES_COLLECTION), {
             vendor_name: "J D Factors",

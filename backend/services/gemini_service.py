@@ -62,6 +62,8 @@ EXTRACTION RULES:
    - If the transaction is in USD (US$, "USD", US Dollar): jurisdiction must be "usa" and gst_amount, hst_amount, pst_amount, tax_amount MUST all be 0 (no Canadian tax fields)
 
 5. TAX EXTRACTION (CRITICAL - Extract GST, HST, PST SEPARATELY):
+   - Only fill gst_amount / hst_amount / pst_amount when those tax lines are explicitly printed on the document.
+   - Do NOT infer or calculate Canadian tax from category, subtotal, or gross total alone.
    Canadian Tax Rules by Province:
    
    HST PROVINCES (Harmonized Sales Tax - combines federal + provincial):
