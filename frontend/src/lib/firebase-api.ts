@@ -133,6 +133,78 @@ function fullCalendarYearFromRange(
   return y;
 }
 
+/** Same cap for getSummary, CSV ZIP, and XLSX so totals always use the same row set. */
+const EXPORT_FINANCIALS_LIST_LIMIT = 10000;
+
+/**
+ * Single source of truth for which expenses feed dashboard P&L and export "Expenses" sheets.
+ * Order: optional verified → date window → drop reclassified assets → drop Personel from P&L slice.
+ */
+function partitionExpensesForPnlExport(
+  raw: Expense[],
+  opts: {
+    start_date?: string;
+    end_date?: string;
+    /** Default true (dashboard). Set false to include unverified. */
+    verified_only?: boolean;
+  },
+): {
+  plExpenses: Expense[];
+  assetExpenses: Expense[];
+  personalForBreakdown: Expense[];
+  /** Rows after verified + date filters (includes reclassified-to-asset). */
+  inWindowAll: Expense[];
+  reclassifiedAssetCount: number;
+} {
+  const verifiedOnly = opts.verified_only !== false;
+  let expenses = raw;
+  if (verifiedOnly) {
+    expenses = expenses.filter((e) => e.is_verified);
+  }
+  if (opts.start_date) {
+    const startDate = new Date(opts.start_date);
+    expenses = expenses.filter(
+      (e) => e.transaction_date && new Date(e.transaction_date) >= startDate,
+    );
+  }
+  if (opts.end_date) {
+    const endDate = new Date(opts.end_date);
+    endDate.setHours(23, 59, 59, 999);
+    expenses = expenses.filter(
+      (e) => e.transaction_date && new Date(e.transaction_date) <= endDate,
+    );
+  }
+  const inWindowAll = expenses;
+  const operating = expenses.filter((e) => !isExpenseReclassifiedToAsset(e));
+  const personalForBreakdown = operating.filter((e) => isExcludedFromBusinessPl(e));
+  const plExpenses = operating.filter((e) => !isExcludedFromBusinessPl(e));
+  const assetExpenses = expenses.filter((e) => isExpenseReclassifiedToAsset(e));
+  return {
+    plExpenses,
+    assetExpenses,
+    personalForBreakdown,
+    inWindowAll,
+    reclassifiedAssetCount: assetExpenses.length,
+  };
+}
+
+async function fetchCcaForExportWindow(
+  start_date?: string,
+  end_date?: string,
+): Promise<{ cca_deduction_cad: number; cca_fiscal_year: number | null }> {
+  const ccaYear = fullCalendarYearFromRange(start_date, end_date);
+  if (ccaYear === null || !listAssetsForSummary) {
+    return { cca_deduction_cad: 0, cca_fiscal_year: null };
+  }
+  try {
+    const assetRows = await listAssetsForSummary();
+    const cca = Math.round(getTotalCCAForYear(assetRows, ccaYear) * 100) / 100;
+    return { cca_deduction_cad: cca, cca_fiscal_year: ccaYear };
+  } catch {
+    return { cca_deduction_cad: 0, cca_fiscal_year: ccaYear };
+  }
+}
+
 /** High-level data source for audit filters (maps to entry_type). */
 export type ExpenseSourceKind = "bank" | "receipt" | "manual";
 
@@ -3059,27 +3131,18 @@ export const exportApi = {
     end_date?: string;
     verified_only?: boolean;
   }): Promise<Blob> => {
-    const allExpenses = await expensesApi.list({ per_page: 1000 });
+    const allExpenses = await expensesApi.list({ per_page: EXPORT_FINANCIALS_LIST_LIMIT });
 
-    // Filter expenses
-    let expenses = allExpenses.expenses;
-    if (params?.verified_only) {
-      expenses = expenses.filter(e => e.is_verified);
-    }
-    if (params?.start_date) {
-      const startDate = new Date(params.start_date);
-      expenses = expenses.filter(e => e.transaction_date && new Date(e.transaction_date) >= startDate);
-    }
-    if (params?.end_date) {
-      const endDate = new Date(params.end_date);
-      endDate.setHours(23, 59, 59, 999);
-      expenses = expenses.filter(e => e.transaction_date && new Date(e.transaction_date) <= endDate);
-    }
-
-    const operatingExpenses = expenses.filter((e) => !isExpenseReclassifiedToAsset(e));
-    const reclassifiedAssetCount = expenses.length - operatingExpenses.length;
-    const plExpenses = operatingExpenses.filter((e) => !isExcludedFromBusinessPl(e));
-    const assetExpenses = expenses.filter((e) => isExpenseReclassifiedToAsset(e));
+    const {
+      plExpenses,
+      assetExpenses,
+      inWindowAll,
+      reclassifiedAssetCount,
+    } = partitionExpensesForPnlExport(allExpenses.expenses, {
+      start_date: params?.start_date,
+      end_date: params?.end_date,
+      verified_only: params?.verified_only,
+    });
 
     // CSV Header (aligns with dashboard net-of-ITC logic)
     const headers = [
@@ -3110,11 +3173,11 @@ export const exportApi = {
     ];
 
     // ===== REVENUES =====
-    const allRevenues = await revenueApi.list({ per_page: 1000 });
+    const allRevenues = await revenueApi.list({ per_page: EXPORT_FINANCIALS_LIST_LIMIT });
     let revenues = allRevenues.revenues;
 
     // Filter verified only if requested
-    if (params?.verified_only) {
+    if (params?.verified_only !== false) {
       revenues = revenues.filter(r => r.status === "verified");
     }
 
@@ -3172,23 +3235,30 @@ export const exportApi = {
       0,
     );
     const totalRevenueCAD = revenues.reduce((sum, r) => sum + (r.amount_cad || 0), 0);
-    const netProfit = totalRevenueCAD - totalNetExpensesCAD;
+    const { cca_deduction_cad: ccaCsv, cca_fiscal_year: ccaYearCsv } =
+      await fetchCcaForExportWindow(params?.start_date, params?.end_date);
+    const totalNetRoundedCsv = Math.round(totalNetExpensesCAD * 100) / 100;
+    const totalPnlExpenseCsv = Math.round((totalNetRoundedCsv + ccaCsv) * 100) / 100;
+    const netProfitCsv = Math.round((totalRevenueCAD - totalPnlExpenseCsv) * 100) / 100;
 
     const summaryCsv = [
       "",
       "=== SUMMARY ===",
       `"Gross Revenue (CAD)","${totalRevenueCAD.toFixed(2)}"`,
-      `"Total Expenses (CAD) — net of recoverable GST/HST (ITC)","${totalNetExpensesCAD.toFixed(2)}"`,
+      `"Total Expenses (CAD) — net of recoverable GST/HST (ITC)","${totalNetRoundedCsv.toFixed(2)}"`,
       `"Gross Operating Expenses (CAD) — before ITC","${totalGrossOperatingCAD.toFixed(2)}"`,
-      `"Net Profit (CAD)","${netProfit.toFixed(2)}"`,
+      `"CCA deduction (CAD) — full calendar year only","${ccaCsv.toFixed(2)}"`,
+      `"CCA calendar year","${ccaYearCsv ?? "—"}"`,
+      `"Total expenses incl. CCA (CAD) — P&L","${totalPnlExpenseCsv.toFixed(2)}"`,
+      `"Net Profit (CAD)","${netProfitCsv.toFixed(2)}"`,
       `"",""`,
-      `"Total GST+HST Recoverable (ITC) — asset","${totalItcEffective.toFixed(2)}"`,
+      `"Total GST+HST Recoverable (ITC)","${totalItcEffective.toFixed(2)}"`,
       `"PST (6-10%) — not recoverable (sunk; included in net expense)","${totalPstRecorded.toFixed(2)}"`,
       `"",""`,
       `"Expense rows in Expenses section (P&L operating only)","${plExpenses.length}"`,
       `"Reclassified to asset (excluded from Expenses section)","${reclassifiedAssetCount}"`,
       `"Assets.csv rows in ZIP (capital purchases)","${assetExpenses.length}"`,
-      `"Verified expense rows in period (before asset exclusion)","${expenses.length}"`,
+      `"Expense rows in period after verified+date (incl. assets)","${inWindowAll.length}"`,
       `"Revenue Count","${revenues.length}"`
     ];
 
@@ -3220,34 +3290,18 @@ export const exportApi = {
     end_date?: string;
     verified_only?: boolean;
   }): Promise<Blob> => {
-    // Get all expenses
-    const allExpenses = await expensesApi.list({ per_page: 1000 });
-    let expenses = allExpenses.expenses;
+    const allExpenses = await expensesApi.list({ per_page: EXPORT_FINANCIALS_LIST_LIMIT });
 
-    // Filter verified only if requested
-    if (params?.verified_only) {
-      expenses = expenses.filter(e => e.is_verified);
-    }
-
-    // Apply date filters
-    if (params?.start_date) {
-      const startDate = new Date(params.start_date);
-      expenses = expenses.filter(e =>
-        e.transaction_date && new Date(e.transaction_date) >= startDate
-      );
-    }
-    if (params?.end_date) {
-      const endDate = new Date(params.end_date);
-      endDate.setHours(23, 59, 59, 999);
-      expenses = expenses.filter(e =>
-        e.transaction_date && new Date(e.transaction_date) <= endDate
-      );
-    }
-
-    const operatingExpenses = expenses.filter((e) => !isExpenseReclassifiedToAsset(e));
-    const reclassifiedAssetCount = expenses.length - operatingExpenses.length;
-    const plExpenses = operatingExpenses.filter((e) => !isExcludedFromBusinessPl(e));
-    const assetExpenses = expenses.filter((e) => isExpenseReclassifiedToAsset(e));
+    const {
+      plExpenses,
+      assetExpenses,
+      inWindowAll,
+      reclassifiedAssetCount,
+    } = partitionExpensesForPnlExport(allExpenses.expenses, {
+      start_date: params?.start_date,
+      end_date: params?.end_date,
+      verified_only: params?.verified_only,
+    });
 
     const excelData = plExpenses.map((e) => buildExpenseExcelExportRow(e));
     const assetExcelData = assetExpenses.map((e) => buildExpenseExcelExportRow(e));
@@ -3304,11 +3358,10 @@ export const exportApi = {
     assetsSheet["!cols"] = expensesSheet["!cols"];
 
     // ===== REVENUES SHEET =====
-    const allRevenues = await revenueApi.list({ per_page: 1000 });
+    const allRevenues = await revenueApi.list({ per_page: EXPORT_FINANCIALS_LIST_LIMIT });
     let revenues = allRevenues.revenues;
 
-    // Filter verified only if requested
-    if (params?.verified_only) {
+    if (params?.verified_only !== false) {
       revenues = revenues.filter(r => r.status === "verified");
     }
 
@@ -3378,15 +3431,22 @@ export const exportApi = {
       return sum + (e.cad_amount || 0) * rate;
     }, 0);
     const totalRevenueCAD = revenues.reduce((sum, r) => sum + (r.amount_cad || 0), 0);
-    const netProfit = totalRevenueCAD - totalNetExpensesCAD;
+    const { cca_deduction_cad: ccaXlsx, cca_fiscal_year: ccaYearXlsx } =
+      await fetchCcaForExportWindow(params?.start_date, params?.end_date);
+    const totalNetRoundedXlsx = Math.round(totalNetExpensesCAD * 100) / 100;
+    const totalPnlExpenseXlsx = Math.round((totalNetRoundedXlsx + ccaXlsx) * 100) / 100;
+    const netProfitXlsx = Math.round((totalRevenueCAD - totalPnlExpenseXlsx) * 100) / 100;
 
     const summaryData = [
       { "Metric": "Gross Revenue (CAD)", "Value": totalRevenueCAD.toFixed(2) },
-      { "Metric": "Total Expenses (CAD) — net of recoverable GST/HST (ITC)", "Value": totalNetExpensesCAD.toFixed(2) },
+      { "Metric": "Total Expenses (CAD) — net of recoverable GST/HST (ITC)", "Value": totalNetRoundedXlsx.toFixed(2) },
       { "Metric": "Gross Operating Expenses (CAD) — before ITC", "Value": totalGrossOperatingCAD.toFixed(2) },
-      { "Metric": "Net Profit (CAD)", "Value": netProfit.toFixed(2) },
+      { "Metric": "CCA deduction (CAD) — full calendar year only", "Value": ccaXlsx.toFixed(2) },
+      { "Metric": "CCA calendar year", "Value": ccaYearXlsx != null ? String(ccaYearXlsx) : "—" },
+      { "Metric": "Total expenses incl. CCA (CAD) — P&L", "Value": totalPnlExpenseXlsx.toFixed(2) },
+      { "Metric": "Net Profit (CAD)", "Value": netProfitXlsx.toFixed(2) },
       { "Metric": "", "Value": "" },
-      { "Metric": "Total GST+HST Recoverable (ITC) — asset", "Value": totalItcEffective.toFixed(2) },
+      { "Metric": "Total GST+HST Recoverable (ITC)", "Value": totalItcEffective.toFixed(2) },
       { "Metric": "PST (6-10%) — not recoverable (sunk; in net expense)", "Value": totalPST.toFixed(2) },
       { "Metric": "", "Value": "" },
       { "Metric": "Recorded GST (5%) — line items", "Value": totalGSTRecorded.toFixed(2) },
@@ -3398,7 +3458,7 @@ export const exportApi = {
       { "Metric": "Expense rows in Expenses sheet (P&L operating only)", "Value": plExpenses.length.toString() },
       { "Metric": "Reclassified to asset (excluded)", "Value": reclassifiedAssetCount.toString() },
       { "Metric": "Assets sheet rows (capital / CCA)", "Value": assetExcelData.length.toString() },
-      { "Metric": "Verified rows in period (before asset exclusion)", "Value": expenses.length.toString() },
+      { "Metric": "Expense rows in period after verified+date (incl. assets)", "Value": inWindowAll.length.toString() },
       { "Metric": "Revenue rows", "Value": revenues.length.toString() },
     ];
 
@@ -3422,29 +3482,16 @@ export const exportApi = {
   },
 
   getSummary: async (params?: { start_date?: string; end_date?: string }): Promise<any> => {
-    const allExpenses = await expensesApi.list({ per_page: 1000 });
+    const allExpenses = await expensesApi.list({ per_page: EXPORT_FINANCIALS_LIST_LIMIT });
 
-    // Only count verified expenses for summary (matching backend behavior)
-    let filteredExpenses = allExpenses.expenses.filter(e => e.is_verified);
-    filteredExpenses = filteredExpenses.filter((e) => !isExpenseReclassifiedToAsset(e));
-
-    // Apply date filters if provided
-    if (params?.start_date) {
-      const startDate = new Date(params.start_date);
-      filteredExpenses = filteredExpenses.filter(e =>
-        e.transaction_date && new Date(e.transaction_date) >= startDate
-      );
-    }
-    if (params?.end_date) {
-      const endDate = new Date(params.end_date);
-      endDate.setHours(23, 59, 59, 999); // Include the whole end day
-      filteredExpenses = filteredExpenses.filter(e =>
-        e.transaction_date && new Date(e.transaction_date) <= endDate
-      );
-    }
-
-    const personalForBreakdown = filteredExpenses.filter((e) => isExcludedFromBusinessPl(e));
-    const plExpenses = filteredExpenses.filter((e) => !isExcludedFromBusinessPl(e));
+    const { plExpenses, personalForBreakdown } = partitionExpensesForPnlExport(
+      allExpenses.expenses,
+      {
+        start_date: params?.start_date,
+        end_date: params?.end_date,
+        verified_only: true,
+      },
+    );
 
     const expenses = {
       ...allExpenses,
@@ -3624,16 +3671,8 @@ export const exportApi = {
     by_currency.usd.net_converted_cad =
       Math.round(by_currency.usd.net_converted_cad * 100) / 100;
 
-    const ccaYear = fullCalendarYearFromRange(params?.start_date, params?.end_date);
-    let ccaDeduction = 0;
-    if (ccaYear !== null && listAssetsForSummary) {
-      try {
-        const assetRows = await listAssetsForSummary();
-        ccaDeduction = Math.round(getTotalCCAForYear(assetRows, ccaYear) * 100) / 100;
-      } catch {
-        ccaDeduction = 0;
-      }
-    }
+    const { cca_deduction_cad: ccaDeduction, cca_fiscal_year: ccaYear } =
+      await fetchCcaForExportWindow(params?.start_date, params?.end_date);
     totals.cca_deduction_cad = ccaDeduction;
     totals.cca_fiscal_year = ccaYear;
     totals.total_net_expense_cad =
