@@ -24,6 +24,7 @@ import { useForm } from "react-hook-form";
 import { useQuery } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { expensesApi, cardsApi, isExpenseReclassifiedToAsset } from "@/lib/firebase-api";
+import { expenseIsUsdPayment } from "@/lib/bc-expense-tax";
 import { ReclassifiedAssetBadge } from "@/components/expenses/ReclassifiedAssetBadge";
 import { formatCurrency, formatDate, cn } from "@/lib/utils";
 import { categoryLabels } from "@/lib/store";
@@ -158,10 +159,12 @@ export function ReviewModal({
       const dateStr = data.transaction_date ? String(data.transaction_date).substring(0, 10) : null;
       const isoDate = dateStr ? `${dateStr}T12:00:00.000Z` : null;
 
-      const taxTotal =
-        (Number(data.gst_amount) || 0) +
-        (Number(data.hst_amount) || 0) +
-        (Number(data.pst_amount) || 0);
+      const usdPay = expenseIsUsdPayment(expense);
+      const taxTotal = usdPay
+        ? 0
+        : (Number(data.gst_amount) || 0) +
+          (Number(data.hst_amount) || 0) +
+          (Number(data.pst_amount) || 0);
       await expensesApi.update(expense.id, {
         ...data,
         transaction_date: isoDate,
@@ -171,6 +174,9 @@ export function ReviewModal({
           : selectedCard
             ? (selectedCard.is_company_card ? "company_card" : "personal_card")
             : expense.payment_source || "unknown",
+        gst_amount: usdPay ? 0 : Number(data.gst_amount) || 0,
+        hst_amount: usdPay ? 0 : Number(data.hst_amount) || 0,
+        pst_amount: usdPay ? 0 : Number(data.pst_amount) || 0,
         tax_amount: taxTotal,
         gst_itc_estimated: false,
         is_verified: true,
@@ -595,8 +601,8 @@ export function ReviewModal({
                   </select>
                 </div>
 
-                {/* Tax Amounts (Only for Canada) - Separate fields for GST, HST, PST */}
-                {expense.jurisdiction === "canada" && (
+                {/* Tax Amounts — Canada CAD only; USD payments have no Canadian tax */}
+                {expense.jurisdiction === "canada" && !expenseIsUsdPayment(expense) && (
                   <div className="space-y-4">
                     <div className="p-3 rounded-lg bg-slate-800/50 border border-slate-700">
                       <p className="text-xs text-slate-400 mb-3">

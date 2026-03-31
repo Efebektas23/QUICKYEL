@@ -112,6 +112,42 @@ export function shouldBypassCanadianItcEstimation(
   return false;
 }
 
+/** True when the expense was paid in USD — no Canadian GST/HST/PST in calculations or exports. */
+export function expenseIsUsdPayment(
+  e: Pick<ExpenseTaxFields, "original_currency" | "currency">,
+): boolean {
+  return (e.original_currency || e.currency || "CAD").toUpperCase() === "USD";
+}
+
+/** GST/HST/PST as stored for UI and summaries — USD rows are always zero. */
+export function storedCanadianTaxForDisplay(
+  e: ExpenseItcMeta,
+): { gst: number; hst: number; pst: number } {
+  if (expenseIsUsdPayment(e)) return { gst: 0, hst: 0, pst: 0 };
+  const gst = e.gst_amount ?? 0;
+  const hstRaw = e.hst_amount ?? 0;
+  const taxAmt = e.tax_amount ?? 0;
+  const hst = gst <= EPS && hstRaw <= EPS && taxAmt > EPS ? taxAmt : hstRaw;
+  return { gst, hst, pst: e.pst_amount ?? 0 };
+}
+
+/** Persisted fields to clear for USD payments (all categories). */
+export function usdPaymentZeroTaxWritePatch(): {
+  gst_amount: number;
+  hst_amount: number;
+  pst_amount: number;
+  tax_amount: number;
+  gst_itc_estimated: false;
+} {
+  return {
+    gst_amount: 0,
+    hst_amount: 0,
+    pst_amount: 0,
+    tax_amount: 0,
+    gst_itc_estimated: false,
+  };
+}
+
 /**
  * Persisted ITC estimate for CAD operating expenses (BC rules).
  * Returns null for USD, USA jurisdiction, or non-Canada jurisdiction.
@@ -144,6 +180,10 @@ export function mergeBcItcForCategoryChange(
   newCategory: string,
 ): Record<string, unknown> {
   const out: Record<string, unknown> = { category: newCategory };
+  if (expenseIsUsdPayment(existing)) {
+    Object.assign(out, usdPaymentZeroTaxWritePatch());
+    return out;
+  }
   const cur = existing.original_currency || existing.currency;
   if (shouldBypassCanadianItcEstimation(cur, existing.jurisdiction)) {
     if (existing.gst_itc_estimated === true) {
@@ -197,6 +237,9 @@ export function getEffectiveGstHstForItc(
 
 /** Total recoverable ITC (GST + HST) using stored values or BC category estimate when allowed. */
 export function getEffectiveRecoverableItcCad(e: ExpenseItcMeta): number {
+  if (expenseIsUsdPayment(e)) {
+    return 0;
+  }
   if (e.gst_itc_estimated === true) {
     if (shouldBypassCanadianItcEstimation(e.original_currency || e.currency, e.jurisdiction)) {
       return 0;
@@ -232,6 +275,9 @@ export function getNetExpenseCad(e: ExpenseItcMeta): number {
 
 /** Export / audit: whether ITC came from category auto-estimate vs receipt or manual entry. */
 export function getItcSourceLabel(e: ExpenseItcMeta): "Auto-Estimated" | "Manual / Receipt" {
+  if (expenseIsUsdPayment(e)) {
+    return "Manual / Receipt";
+  }
   if (e.gst_itc_estimated === true) {
     if (shouldBypassCanadianItcEstimation(e.original_currency || e.currency, e.jurisdiction)) {
       return "Manual / Receipt";

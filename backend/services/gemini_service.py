@@ -59,6 +59,7 @@ EXTRACTION RULES:
    - If jurisdiction is "usa" → currency is "USD"
    - If jurisdiction is "canada" → currency is "CAD"
    - Look for explicit "Currency: CAD/USD" on invoices
+   - If the transaction is in USD (US$, "USD", US Dollar): jurisdiction must be "usa" and gst_amount, hst_amount, pst_amount, tax_amount MUST all be 0 (no Canadian tax fields)
 
 5. TAX EXTRACTION (CRITICAL - Extract GST, HST, PST SEPARATELY):
    Canadian Tax Rules by Province:
@@ -89,7 +90,7 @@ EXTRACTION RULES:
    - If invoice shows "HST 13%" → put in hst_amount
    - Look for: "GST", "G.S.T.", "HST", "H.S.T.", "PST", "P.S.T.", "QST", "Tax"
    
-   For USA: Set all tax amounts to 0 (US sales tax is NOT recoverable for Canadian businesses)
+   For USA / USD-priced receipts: Set gst_amount, hst_amount, pst_amount, and tax_amount to 0 (amount is converted to CAD elsewhere; never output Canadian GST/HST/PST for USD payments)
 
 6. CATEGORY (map to exactly one - CRA T2125 compliant for trucking):
    - "fuel": Diesel, DEF, Pump, Gas, Fuel, Unleaded, Premium, Petro-Canada, Shell, Esso, Love's, Flying J, Pilot

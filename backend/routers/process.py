@@ -112,6 +112,16 @@ async def process_receipt(request: ProcessReceiptRequest):
                 logger.error(f"Currency conversion error: {e}")
                 exchange_rate = 1.40  # Fallback rate
                 cad_amount = round(parsed_data.total_amount * exchange_rate, 2)
+
+        tax_amount = parsed_data.tax_amount or 0.0
+        gst_amount = parsed_data.gst_amount or 0.0
+        hst_amount = parsed_data.hst_amount or 0.0
+        pst_amount = parsed_data.pst_amount or 0.0
+        if currency == "USD":
+            tax_amount = 0.0
+            gst_amount = 0.0
+            hst_amount = 0.0
+            pst_amount = 0.0
         
         return ProcessReceiptResponse(
             expense_id=request.expense_id,
@@ -121,10 +131,10 @@ async def process_receipt(request: ProcessReceiptRequest):
             jurisdiction=parsed_data.jurisdiction or "unknown",
             total_amount=parsed_data.total_amount,
             currency=currency,
-            tax_amount=parsed_data.tax_amount or 0.0,
-            gst_amount=parsed_data.gst_amount or 0.0,
-            hst_amount=parsed_data.hst_amount or 0.0,
-            pst_amount=parsed_data.pst_amount or 0.0,
+            tax_amount=tax_amount,
+            gst_amount=gst_amount,
+            hst_amount=hst_amount,
+            pst_amount=pst_amount,
             exchange_rate=exchange_rate,
             cad_amount=cad_amount,
             card_last_4=parsed_data.card_last_4,

@@ -14,7 +14,12 @@ import pandas as pd
 from database import get_db
 from models import User, Expense, ExpenseCategory
 from routers.auth import get_current_user
-from bc_expense_tax import effective_recoverable_itc_cad, itc_source_label, net_expense_cad
+from bc_expense_tax import (
+    effective_recoverable_itc_cad,
+    itc_source_label,
+    net_expense_cad,
+    recorded_canadian_tax_parts,
+)
 from expense_operating import (
     operating_expenses_for_export,
     operating_expenses_excluding_assets_only,
@@ -150,13 +155,7 @@ async def export_csv(
         # Exchange rate display
         exchange_rate = f"{expense.exchange_rate:.4f}" if expense.exchange_rate and expense.exchange_rate != 1.0 else "N/A (CAD)"
         
-        gst = expense.gst_amount or 0
-        hst = expense.hst_amount or 0
-        pst = expense.pst_amount or 0
-        tax_amt = expense.tax_amount or 0
-        effective_hst = hst
-        if gst <= 1e-6 and hst <= 1e-6 and tax_amt > 1e-6:
-            effective_hst = tax_amt
+        gst, effective_hst, pst = recorded_canadian_tax_parts(expense)
         total_tax = gst + effective_hst + pst
         net_cad = net_expense_cad(expense)
         itc_eff = effective_recoverable_itc_cad(expense)
@@ -253,13 +252,7 @@ async def export_xlsx(
         if expense.category == ExpenseCategory.MEALS_ENTERTAINMENT:
             notes = f"50% deductible. {notes}".strip()
         
-        gst = expense.gst_amount or 0
-        hst = expense.hst_amount or 0
-        pst = expense.pst_amount or 0
-        tax_amt = expense.tax_amount or 0
-        effective_hst = hst
-        if gst <= 1e-6 and hst <= 1e-6 and tax_amt > 1e-6:
-            effective_hst = tax_amt
+        gst, effective_hst, pst = recorded_canadian_tax_parts(expense)
         total_tax = gst + effective_hst + pst
         net_c = net_expense_cad(expense)
         itc_e = effective_recoverable_itc_cad(expense)
@@ -431,11 +424,13 @@ async def get_summary(
 
     # Calculate summaries with separate tax totals (Personel excluded from P&L totals)
     total_cad = sum(e.cad_amount or 0 for e in pl_for_totals)
-    total_gst = sum(e.gst_amount or 0 for e in pl_for_totals)  # GST only (5%)
-    total_hst = sum(e.hst_amount or 0 for e in pl_for_totals)  # HST only (13-15%)
-    total_pst = sum(e.pst_amount or 0 for e in pl_for_totals)  # PST (not recoverable)
-    total_tax = total_gst + total_hst + total_pst         # Total all taxes
-    total_itc_recoverable = total_gst + total_hst         # Only GST + HST are ITC recoverable
+    total_gst = sum(recorded_canadian_tax_parts(e)[0] for e in pl_for_totals)
+    total_hst = sum(recorded_canadian_tax_parts(e)[1] for e in pl_for_totals)
+    total_pst = sum(recorded_canadian_tax_parts(e)[2] for e in pl_for_totals)
+    total_tax = total_gst + total_hst + total_pst
+    total_itc_recoverable = sum(
+        effective_recoverable_itc_cad(e) for e in pl_for_totals
+    )
 
     # Calculate total potential tax deductions (T2125 form)
     total_potential_deductions = sum(calculate_deductible_amount(e) for e in pl_for_totals)
@@ -455,12 +450,13 @@ async def get_summary(
                 "total_deductible": 0,
                 "deduction_rate": DEDUCTION_RATES.get(expense.category, 0.0)
             }
+        g, h, p = recorded_canadian_tax_parts(expense)
         by_category[cat]["count"] += 1
         by_category[cat]["total_cad"] += expense.cad_amount or 0
-        by_category[cat]["total_gst"] += expense.gst_amount or 0
-        by_category[cat]["total_hst"] += expense.hst_amount or 0
-        by_category[cat]["total_pst"] += expense.pst_amount or 0
-        by_category[cat]["total_tax"] += (expense.gst_amount or 0) + (expense.hst_amount or 0) + (expense.pst_amount or 0)
+        by_category[cat]["total_gst"] += g
+        by_category[cat]["total_hst"] += h
+        by_category[cat]["total_pst"] += p
+        by_category[cat]["total_tax"] += g + h + p
         by_category[cat]["total_deductible"] += calculate_deductible_amount(expense)
     
     # By payment source

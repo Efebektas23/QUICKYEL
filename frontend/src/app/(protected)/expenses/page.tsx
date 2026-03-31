@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { expensesApi, cardsApi } from "@/lib/firebase-api";
+import { storedCanadianTaxForDisplay } from "@/lib/bc-expense-tax";
 import { formatCurrency, formatDate, cn } from "@/lib/utils";
 import { categoryLabels, categoryColors } from "@/lib/store";
 import { ReviewModal } from "@/components/expenses/ReviewModal";
@@ -314,9 +315,18 @@ export default function ExpensesPage() {
   const summaryStats = useMemo(() => {
     const expenses = filteredData.expenses;
     const total = expenses.reduce((sum: number, e: any) => sum + (e.cad_amount || 0), 0);
-    const gst = expenses.reduce((sum: number, e: any) => sum + (e.gst_amount || 0), 0);
-    const hst = expenses.reduce((sum: number, e: any) => sum + (e.hst_amount || 0), 0);
-    const pst = expenses.reduce((sum: number, e: any) => sum + (e.pst_amount || 0), 0);
+    const gst = expenses.reduce(
+      (sum: number, e: any) => sum + storedCanadianTaxForDisplay(e).gst,
+      0,
+    );
+    const hst = expenses.reduce(
+      (sum: number, e: any) => sum + storedCanadianTaxForDisplay(e).hst,
+      0,
+    );
+    const pst = expenses.reduce(
+      (sum: number, e: any) => sum + storedCanadianTaxForDisplay(e).pst,
+      0,
+    );
     const verified = expenses.filter((e: any) => e.is_verified).length;
     const pending = expenses.filter((e: any) => !e.is_verified).length;
     const matched = expenses.filter((e: any) => {

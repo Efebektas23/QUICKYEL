@@ -39,11 +39,14 @@ import {
 import {
   computeBcItcAutoFieldsFromGross,
   expenseHasManualOrParsedTax,
+  expenseIsUsdPayment,
   getEffectiveRecoverableItcCad,
   getItcSourceLabel,
   getNetExpenseCad,
   mergeBcItcForCategoryChange,
   shouldBypassCanadianItcEstimation,
+  storedCanadianTaxForDisplay,
+  usdPaymentZeroTaxWritePatch,
 } from "./bc-expense-tax";
 
 // Collection references
@@ -373,8 +376,11 @@ export const expensesApi = {
   create: async (expense: Partial<Expense>): Promise<string> => {
     await ensureAuth();
     const now = new Date();
+    const payload = expenseIsUsdPayment(expense as Expense)
+      ? { ...expense, ...usdPaymentZeroTaxWritePatch() }
+      : expense;
     const docRef = await addDoc(collection(db, EXPENSES_COLLECTION), {
-      ...expense,
+      ...payload,
       created_at: Timestamp.fromDate(now),
       updated_at: Timestamp.fromDate(now),
     });
@@ -616,8 +622,14 @@ export const expensesApi = {
   update: async (id: string, data: Partial<Expense>): Promise<void> => {
     await ensureAuth();
     const docRef = doc(db, EXPENSES_COLLECTION, id);
+    const snap = await getDoc(docRef);
+    const merged = snap.exists()
+      ? { ...snap.data(), ...data }
+      : { ...data };
+    const payload =
+      expenseIsUsdPayment(merged as Expense) ? { ...data, ...usdPaymentZeroTaxWritePatch() } : data;
     await updateDoc(docRef, {
-      ...data,
+      ...payload,
       updated_at: Timestamp.fromDate(new Date()),
     });
   },
@@ -645,7 +657,9 @@ export const expensesApi = {
       updated_at: now,
     };
     if (exp) {
-      if (exp.gst_itc_estimated === false) {
+      if (expenseIsUsdPayment(exp)) {
+        Object.assign(patch, usdPaymentZeroTaxWritePatch());
+      } else if (exp.gst_itc_estimated === false) {
         /* keep taxes — user or receipt is authoritative */
       } else if (exp.gst_itc_estimated === true) {
         if (shouldBypassCanadianItcEstimation(exp.original_currency || exp.currency, exp.jurisdiction)) {
@@ -679,8 +693,8 @@ export const expensesApi = {
   },
 
   /**
-   * Fix historical USD / USA expenses that incorrectly stored category-based Canadian ITC.
-   * Zeros GST/HST/tax_amount and clears gst_itc_estimated. Idempotent.
+   * Fix historical USD-paid expenses that still carry Canadian tax or ITC estimate flags.
+   * Idempotent.
    */
   sanitizeUsdAutoEstimatedItc: async (): Promise<{ updated: number }> => {
     await ensureAuth();
@@ -702,18 +716,20 @@ export const expensesApi = {
     };
 
     const now = Timestamp.fromDate(new Date());
+    const taxDirty = (d: Record<string, unknown>) =>
+      (Number(d.gst_amount) || 0) > 1e-6 ||
+      (Number(d.hst_amount) || 0) > 1e-6 ||
+      (Number(d.pst_amount) || 0) > 1e-6 ||
+      (Number(d.tax_amount) || 0) > 1e-6 ||
+      d.gst_itc_estimated === true;
+
     for (const docSnap of snapshot.docs) {
       const data = docSnap.data();
       const cur = (data.original_currency || data.currency || "CAD").toUpperCase();
-      const jur = String(data.jurisdiction || "").toLowerCase();
-      const isUsdOrUsa = cur === "USD" || jur === "usa" || jur === "us";
-      if (!isUsdOrUsa || data.gst_itc_estimated !== true) continue;
+      if (cur !== "USD" || !taxDirty(data)) continue;
 
       batch.update(docSnap.ref, {
-        gst_amount: 0,
-        hst_amount: 0,
-        tax_amount: 0,
-        gst_itc_estimated: false,
+        ...usdPaymentZeroTaxWritePatch(),
         updated_at: now,
       });
       batchOps += 1;
@@ -2552,19 +2568,23 @@ export const bankImportApi = {
             }
 
             const jurisdiction = isUsd ? "usa" : "canada";
-            const itcAuto =
-              computeBcItcAutoFieldsFromGross(
+            const taxPersist = (() => {
+              if (isUsd) return usdPaymentZeroTaxWritePatch();
+              const auto = computeBcItcAutoFieldsFromGross(
                 tx.category || "uncategorized",
                 cadAmount,
                 jurisdiction,
                 currency,
-              ) || {
-                gst_amount: 0,
+              );
+              if (!auto) return usdPaymentZeroTaxWritePatch();
+              return {
+                gst_amount: auto.gst_amount,
                 hst_amount: 0,
                 pst_amount: 0,
-                tax_amount: 0,
-                gst_itc_estimated: false,
+                tax_amount: auto.tax_amount,
+                gst_itc_estimated: auto.gst_itc_estimated,
               };
+            })();
             await addDoc(collection(db, EXPENSES_COLLECTION), {
               vendor_name: tx.vendor_name || tx.description1,
               transaction_date: tx.transaction_date,
@@ -2572,10 +2592,11 @@ export const bankImportApi = {
               jurisdiction,
               original_amount: originalAmount,
               original_currency: currency,
-              gst_amount: itcAuto.gst_amount,
-              hst_amount: 0,
-              pst_amount: 0,
-              tax_amount: itcAuto.tax_amount,
+              currency,
+              gst_amount: taxPersist.gst_amount,
+              hst_amount: taxPersist.hst_amount,
+              pst_amount: taxPersist.pst_amount,
+              tax_amount: taxPersist.tax_amount,
               exchange_rate: exchangeRate,
               cad_amount: cadAmount,
               card_last_4: null,
@@ -2588,7 +2609,7 @@ export const bankImportApi = {
               notes: `[Bank Import] ${tx.notes || ""} | ${tx.description1} - ${tx.description2}`.trim(),
               entry_type: "bank_import",
               import_fingerprint: fp,
-              gst_itc_estimated: itcAuto.gst_itc_estimated,
+              gst_itc_estimated: taxPersist.gst_itc_estimated,
               created_at: Timestamp.fromDate(now),
               updated_at: Timestamp.fromDate(now),
             });
@@ -2821,30 +2842,39 @@ export const factoringApi = {
           const amount = Math.abs(entry.amount);
           const cadAmount = currency === "CAD" ? amount : amount * exchangeRate;
           const cadRounded = Math.round(cadAmount * 100) / 100;
-          const itcFact =
-            computeBcItcAutoFieldsFromGross(
+          const isUsdFact = currency === "USD";
+          const jurFact = isUsdFact ? "usa" : "canada";
+          const taxFact = (() => {
+            if (isUsdFact) return usdPaymentZeroTaxWritePatch();
+            const auto = computeBcItcAutoFieldsFromGross(
               "factoring_fees",
               cadRounded,
-              "canada",
+              jurFact,
               currency,
-            ) || {
-              gst_amount: 0,
-              tax_amount: 0,
-              gst_itc_estimated: false,
+            );
+            if (!auto) return usdPaymentZeroTaxWritePatch();
+            return {
+              gst_amount: auto.gst_amount,
+              hst_amount: 0,
+              pst_amount: 0,
+              tax_amount: auto.tax_amount,
+              gst_itc_estimated: auto.gst_itc_estimated,
             };
+          })();
 
           await addDoc(collection(db, EXPENSES_COLLECTION), {
             vendor_name: "J D Factors",
             transaction_date: entry.date || null,
             category: "factoring_fees",
-            jurisdiction: "canada",
+            jurisdiction: jurFact,
             original_amount: amount,
             original_currency: currency,
-            tax_amount: itcFact.tax_amount,
-            gst_amount: itcFact.gst_amount,
-            hst_amount: 0,
-            pst_amount: 0,
-            gst_itc_estimated: itcFact.gst_itc_estimated,
+            currency,
+            tax_amount: taxFact.tax_amount,
+            gst_amount: taxFact.gst_amount,
+            hst_amount: taxFact.hst_amount,
+            pst_amount: taxFact.pst_amount,
+            gst_itc_estimated: taxFact.gst_itc_estimated,
             exchange_rate: currency === "CAD" ? 1.0 : exchangeRate,
             cad_amount: cadRounded,
             card_last_4: null,
@@ -2986,20 +3016,18 @@ function expenseToOperatingCsvRow(expense: Expense): string[] {
   ];
 }
 
+function recordedCanadianTaxParts(e: Expense): { gst: number; hst: number; pst: number } {
+  return storedCanadianTaxForDisplay(e);
+}
+
 /** One expense row for XLSX Expenses / Assets sheets (identical column set). */
 function buildExpenseExcelExportRow(expense: Expense): Record<string, string | number> {
   const category = expense.category || "uncategorized";
   const deductionRate = DEDUCTION_RATES[category] ?? 0.0;
   const deductibleAmount = (expense.cad_amount || 0) * deductionRate;
 
-  const gstAmount = expense.gst_amount || 0;
-  const hstAmount = expense.hst_amount || 0;
-  const pstAmount = expense.pst_amount || 0;
-
-  const effectiveHst =
-    gstAmount === 0 && hstAmount === 0 && expense.tax_amount
-      ? expense.tax_amount
-      : hstAmount;
+  const { gst: gstAmount, hst: effectiveHst, pst: pstAmount } =
+    recordedCanadianTaxParts(expense);
   const totalTax = gstAmount + effectiveHst + pstAmount;
 
   const taxRecoverableEffective = getEffectiveRecoverableItcCad(expense);
@@ -3196,7 +3224,10 @@ export const exportApi = {
     const totalNetExpensesCAD = pnlExpenses.reduce((sum, e) => sum + getNetExpenseCad(e), 0);
     const totalGrossOperatingCAD = pnlExpenses.reduce((sum, e) => sum + (e.cad_amount || 0), 0);
     const totalItcEffective = pnlExpenses.reduce((sum, e) => sum + getEffectiveRecoverableItcCad(e), 0);
-    const totalPstRecorded = pnlExpenses.reduce((sum, e) => sum + (e.pst_amount || 0), 0);
+    const totalPstRecorded = pnlExpenses.reduce(
+      (sum, e) => sum + recordedCanadianTaxParts(e).pst,
+      0,
+    );
     const totalRevenueCAD = revenues.reduce((sum, r) => sum + (r.amount_cad || 0), 0);
     const netProfit = totalRevenueCAD - totalNetExpensesCAD;
 
@@ -3389,13 +3420,15 @@ export const exportApi = {
     const totalNetExpensesCAD = expensesForPnl.reduce((sum, e) => sum + getNetExpenseCad(e), 0);
     const totalGrossOperatingCAD = expensesForPnl.reduce((sum, e) => sum + (e.cad_amount || 0), 0);
     const totalItcEffective = expensesForPnl.reduce((sum, e) => sum + getEffectiveRecoverableItcCad(e), 0);
-    const totalGSTRecorded = expensesForPnl.reduce((sum, e) => sum + (e.gst_amount || 0), 0);
-    const totalHSTRecorded = expensesForPnl.reduce((sum, e) => {
-      const hst = e.hst_amount || 0;
-      const backwardHst = (e.gst_amount === 0 && hst === 0 && e.tax_amount) ? e.tax_amount : hst;
-      return sum + backwardHst;
-    }, 0);
-    const totalPST = expensesForPnl.reduce((sum, e) => sum + (e.pst_amount || 0), 0);
+    const totalGSTRecorded = expensesForPnl.reduce(
+      (sum, e) => sum + recordedCanadianTaxParts(e).gst,
+      0,
+    );
+    const totalHSTRecorded = expensesForPnl.reduce(
+      (sum, e) => sum + recordedCanadianTaxParts(e).hst,
+      0,
+    );
+    const totalPST = expensesForPnl.reduce((sum, e) => sum + recordedCanadianTaxParts(e).pst, 0);
     const totalDeductible = expensesForPnl.reduce((sum, e) => {
       const cat = e.category || "uncategorized";
       const rate = DEDUCTION_RATES[cat] ?? 0.0;
@@ -3548,19 +3581,9 @@ export const exportApi = {
         by_currency.cad.count += 1;
       }
 
-      // Calculate GST, HST, and PST separately
-      // BACKWARD COMPATIBILITY: If gst_amount is 0 or not set, but tax_amount has a value,
-      // use tax_amount as GST (for Canadian receipts, tax was typically GST/HST)
-      const gstAmount = expense.gst_amount || 0;
-      const hstAmount = expense.hst_amount || 0;
-      const pstAmount = expense.pst_amount || 0;
-
-      // If no separate values, use tax_amount as HST (backward compatibility)
-      const effectiveGst = gstAmount;
-      const effectiveHst = (gstAmount === 0 && hstAmount === 0 && expense.tax_amount)
-        ? expense.tax_amount
-        : hstAmount;
-      const effectivePst = pstAmount;
+      // GST/HST/PST for totals — USD payments contribute zero (see recordedCanadianTaxParts)
+      const { gst: effectiveGst, hst: effectiveHst, pst: effectivePst } =
+        recordedCanadianTaxParts(expense);
 
       totals.total_gst += effectiveGst;
       totals.total_hst += effectiveHst;
@@ -3618,14 +3641,8 @@ export const exportApi = {
       const cadAmount = expense.cad_amount || 0;
       const netCad = getNetExpenseCad(expense);
       const itcCad = getEffectiveRecoverableItcCad(expense);
-      const gstAmount = expense.gst_amount || 0;
-      const hstAmount = expense.hst_amount || 0;
-      const pstAmount = expense.pst_amount || 0;
-      const effectiveGst = gstAmount;
-      const effectiveHst = (gstAmount === 0 && hstAmount === 0 && expense.tax_amount)
-        ? expense.tax_amount
-        : hstAmount;
-      const effectivePst = pstAmount;
+      const { gst: effectiveGst, hst: effectiveHst, pst: effectivePst } =
+        recordedCanadianTaxParts(expense);
       const deductibleAmount = calculateDeductibleAmount(expense);
       if (!by_category[catPersonal]) {
         by_category[catPersonal] = {

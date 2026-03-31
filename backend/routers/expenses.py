@@ -7,6 +7,7 @@ from typing import List, Optional
 from datetime import datetime
 import logging
 
+from bc_expense_tax import apply_usd_payment_tax_policy
 from database import get_db
 from models import User, Expense, ExpenseCategory, Jurisdiction, PaymentSource
 from schemas import (
@@ -244,6 +245,8 @@ async def upload_receipt(
             expense.original_currency = "CAD"
             expense.exchange_rate = 1.0
             expense.cad_amount = expense.original_amount
+
+        apply_usd_payment_tax_policy(expense)
         
         # Step 6: Match payment card
         if expense.card_last_4:
@@ -359,6 +362,8 @@ async def update_expense(
     
     # Recalculate total tax
     expense.tax_amount = (expense.gst_amount or 0) + (expense.hst_amount or 0) + (expense.pst_amount or 0)
+
+    apply_usd_payment_tax_policy(expense)
     
     if update_data.notes is not None:
         expense.notes = update_data.notes
@@ -467,6 +472,8 @@ async def create_manual_expense(
         expense.jurisdiction = Jurisdiction.CANADA
         expense.exchange_rate = 1.0
         expense.cad_amount = expense_data.original_amount
+
+    apply_usd_payment_tax_policy(expense)
     
     db.add(expense)
     await db.commit()
