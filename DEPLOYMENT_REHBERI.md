@@ -54,7 +54,7 @@ Bu rehber, projenizi en kolay ve ucuz şekilde kendi domain'inize yüklemeniz i�
 DATABASE_URL=<PostgreSQL'den kopyaladığın URL>
 GOOGLE_CLOUD_PROJECT=muhtar-5ab9b
 GCS_BUCKET_NAME=quickyel-receipts
-GEMINI_MODEL=gemini-1.5-flash
+GEMINI_MODEL=gemini-2.5-flash
 GEMINI_API_KEY=AIzaSyAkpM2NjfcmgemxW8LHFJz8FM0nxELWMfQ
 JWT_SECRET=<güçlü-bir-şifre-buraya>
 JWT_ALGORITHM=HS256
@@ -110,7 +110,7 @@ Railway backend servisinin **"Variables"** sekmesinde şunlar olmalı:
 | `DATABASE_URL` | PostgreSQL URL'i | Railway PostgreSQL'den otomatik |
 | `GOOGLE_CLOUD_PROJECT` | `muhtar-5ab9b` | Google Cloud proje adı |
 | `GCS_BUCKET_NAME` | `quickyel-receipts` | Google Cloud Storage bucket |
-| `GEMINI_MODEL` | `gemini-1.5-flash` | Gemini model adı |
+| `GEMINI_MODEL` | `gemini-2.5-flash` | Gemini model adı |
 | `GEMINI_API_KEY` | API anahtarın | Gemini API anahtarı |
 | `JWT_SECRET` | Güçlü şifre | En az 32 karakter |
 | `JWT_ALGORITHM` | `HS256` | JWT algoritması |

@@ -147,7 +147,7 @@ DATABASE_URL=postgresql://postgres:password@localhost:5432/quickyel
 GOOGLE_APPLICATION_CREDENTIALS=./google-cloud-vision-key.json
 GOOGLE_CLOUD_PROJECT=muhtar-5ab9b
 GCS_BUCKET_NAME=quickyel-receipts
-GEMINI_MODEL=gemini-1.5-flash
+GEMINI_MODEL=gemini-2.5-flash
 
 # Security
 JWT_SECRET=your-super-secret-key

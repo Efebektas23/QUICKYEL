@@ -16,7 +16,7 @@ GOOGLE_APPLICATION_CREDENTIALS_JSON=<google-cloud-vision-key.json dosyasının T
 GOOGLE_CLOUD_PROJECT=muhtar-5ab9b
 GCS_BUCKET_NAME=quickyel-receipts
 GEMINI_API_KEY=AIzaSyAkpM2NjfcmgemxW8LHFJz8FM0nxELWMfQ
-GEMINI_MODEL=gemini-1.5-flash
+GEMINI_MODEL=gemini-2.5-flash
 ```
 
 ### Security

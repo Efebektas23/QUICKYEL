@@ -54,7 +54,7 @@ Bu rehber, projenizi 15 dakikada domain'inize yüklemeniz için hazırlanmışt�
 DATABASE_URL=<PostgreSQL'den kopyaladığın URL>
 GOOGLE_CLOUD_PROJECT=muhtar-5ab9b
 GCS_BUCKET_NAME=quickyel-receipts
-GEMINI_MODEL=gemini-1.5-flash
+GEMINI_MODEL=gemini-2.5-flash
 GEMINI_API_KEY=AIzaSyAkpM2NjfcmgemxW8LHFJz8FM0nxELWMfQ
 JWT_SECRET=<32-karakter-güçlü-şifre-buraya>
 JWT_ALGORITHM=HS256
