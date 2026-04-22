@@ -242,7 +242,7 @@ class BankCategorizationService:
     
     Enhanced with resilient AI wrapper:
     - Exponential backoff retry (503/429/500)
-    - Model fallback (gemini-2.0-flash → gemini-2.5-flash)
+    - Model fallback (gemini-2.5-flash → gemini-2.5-flash-lite)
     - Circuit breaker (prevents cascade failures)
     """
     

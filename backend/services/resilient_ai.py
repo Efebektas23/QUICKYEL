@@ -60,8 +60,8 @@ class ModelTier(Enum):
 
 
 MODEL_CHAIN = [
-    {"name": "gemini-2.0-flash", "tier": ModelTier.PRIMARY},
-    {"name": "gemini-2.5-flash", "tier": ModelTier.FALLBACK},
+    {"name": "gemini-2.5-flash", "tier": ModelTier.PRIMARY},
+    {"name": "gemini-2.5-flash-lite", "tier": ModelTier.FALLBACK},
 ]
 
 MAX_RETRIES = 4
@@ -410,17 +410,17 @@ class ResilientModelFactory:
         try:
             genai.configure(api_key=self.api_key)
             self.primary_model = genai.GenerativeModel(
-                model_name="gemini-2.0-flash",
+                model_name="gemini-2.5-flash",
                 generation_config=self.primary_config,
             )
             self.fallback_model = genai.GenerativeModel(
-                model_name="gemini-2.5-flash",
+                model_name="gemini-2.5-flash-lite",
                 generation_config=self.primary_config,
             )
             self._initialized = True
             logger.info(
                 "ResilientModelFactory initialized — "
-                "primary: gemini-2.0-flash, fallback: gemini-2.5-flash"
+                "primary: gemini-2.5-flash, fallback: gemini-2.5-flash-lite"
             )
         except Exception as e:
             logger.error(f"Failed to initialize AI models: {e}")
@@ -449,8 +449,8 @@ def get_ai_health() -> dict:
     return {
         "circuit_breaker": _circuit_breaker.status,
         "models": {
-            "primary": "gemini-2.0-flash",
-            "fallback": "gemini-2.5-flash",
+            "primary": "gemini-2.5-flash",
+            "fallback": "gemini-2.5-flash-lite",
         },
         "config": {
             "max_retries_per_model": MAX_RETRIES,
