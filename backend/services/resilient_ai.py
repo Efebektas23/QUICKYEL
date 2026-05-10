@@ -467,3 +467,50 @@ def get_ai_health() -> dict:
             ),
         },
     }
+
+
+def extract_response_text(response: Any) -> str:
+    """Safely extract text from a Gemini response.
+
+    Gemini 2.5 models (pro/flash) often return multi-part responses (e.g.
+    a thinking part + a text part).  The ``response.text`` quick accessor
+    only works when there is exactly one ``Part`` with text, so it raises
+    an error on multi-part responses.
+
+    This helper:
+    1. Tries ``response.text`` first (fast path for simple responses).
+    2. Falls back to iterating ``response.parts`` and concatenating all
+       text segments.
+    3. As a last resort, walks ``response.candidates[0].content.parts``.
+    """
+    # Fast path — works for single-part text responses
+    try:
+        return response.text
+    except (ValueError, AttributeError):
+        pass
+
+    # Multi-part: iterate response.parts (skips thinking / non-text parts)
+    try:
+        parts = response.parts
+        if parts:
+            texts = [p.text for p in parts if hasattr(p, "text") and p.text]
+            if texts:
+                return "\n".join(texts)
+    except (ValueError, AttributeError):
+        pass
+
+    # Deepest fallback: candidates[0].content.parts
+    try:
+        candidates = response.candidates
+        if candidates:
+            content_parts = candidates[0].content.parts
+            texts = [p.text for p in content_parts if hasattr(p, "text") and p.text]
+            if texts:
+                return "\n".join(texts)
+    except (ValueError, AttributeError, IndexError):
+        pass
+
+    raise ValueError(
+        "Could not extract text from Gemini response — "
+        "response has no text parts or is blocked."
+    )

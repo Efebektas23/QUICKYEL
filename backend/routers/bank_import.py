@@ -11,7 +11,7 @@ import re
 from datetime import datetime
 
 from config import settings
-from services.resilient_ai import ResilientModelFactory
+from services.resilient_ai import ResilientModelFactory, extract_response_text
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -450,7 +450,7 @@ CATEGORIZE ALL {len(transactions)} TRANSACTIONS AND RETURN JSON ARRAY:"""
                 operation_name="bank_categorization",
             )
             
-            content = response.text.strip()
+            content = extract_response_text(response).strip()
             logger.info(f"Gemini categorization response: {content[:500]}...")
             
             # Clean markdown if present

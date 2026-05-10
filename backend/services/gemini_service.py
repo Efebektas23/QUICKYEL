@@ -17,7 +17,7 @@ import os
 
 from config import settings
 from schemas import ParsedReceiptData
-from services.resilient_ai import ResilientModelFactory
+from services.resilient_ai import ResilientModelFactory, extract_response_text
 
 logger = logging.getLogger(__name__)
 
@@ -236,7 +236,7 @@ The above {len(image_contents)} images are parts of the SAME receipt or invoice 
                 operation_name="receipt_vision_parsing",
             )
             
-            content = response.text.strip()
+            content = extract_response_text(response).strip()
             logger.info(f"Gemini Vision raw response: {content[:500]}...")
             
             return self._parse_gemini_response(content)
@@ -283,7 +283,7 @@ EXTRACT AND RETURN JSON:"""
                 operation_name="receipt_parsing",
             )
             
-            content = response.text.strip()
+            content = extract_response_text(response).strip()
             logger.info(f"Gemini raw response: {content[:500]}...")
             
             return self._parse_gemini_response(content)

@@ -8,7 +8,7 @@ import httpx
 import json
 
 from config import settings
-from services.resilient_ai import ResilientModelFactory, map_gemini_exception_to_http
+from services.resilient_ai import ResilientModelFactory, map_gemini_exception_to_http, extract_response_text
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -162,7 +162,7 @@ EXTRACT AND RETURN JSON:"""
                 operation_name="rate_confirmation_text",
             )
             
-            content = response.text.strip()
+            content = extract_response_text(response).strip()
             logger.info(f"Gemini response for Rate Confirmation (text): {content[:500]}...")
             
             return self._parse_gemini_response(content)
@@ -207,7 +207,7 @@ EXTRACT AND RETURN JSON:"""
                 operation_name="rate_confirmation_pdf",
             )
             
-            content = response.text.strip()
+            content = extract_response_text(response).strip()
             logger.info(f"Gemini response for Rate Confirmation (PDF): {content[:500]}...")
             
             return self._parse_gemini_response(content)
@@ -249,7 +249,7 @@ EXTRACT AND RETURN JSON:"""
                 operation_name="rate_confirmation_image",
             )
             
-            content = response.text.strip()
+            content = extract_response_text(response).strip()
             logger.info(f"Gemini response for Rate Confirmation (image): {content[:500]}...")
             
             return self._parse_gemini_response(content)

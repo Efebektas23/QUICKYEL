@@ -14,7 +14,7 @@ import threading
 import time as time_module
 
 from config import settings
-from services.resilient_ai import ResilientModelFactory, map_gemini_exception_to_http
+from services.resilient_ai import ResilientModelFactory, map_gemini_exception_to_http, extract_response_text
 
 # In-process LRU + TTL (single-instance). For multi-instance, front with Redis.
 _PARSE_CACHE: OrderedDict[str, tuple[float, dict]] = OrderedDict()
@@ -281,7 +281,7 @@ class FactoringReportParser:
                 operation_name="factoring_pdf",
             )
             
-            content = response.text.strip()
+            content = extract_response_text(response).strip()
             logger.info(f"Gemini factoring response: {content[:500]}...")
             
             # Clean markdown if present
