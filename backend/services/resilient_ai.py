@@ -482,6 +482,11 @@ def extract_response_text(response: Any) -> str:
     2. Falls back to iterating ``response.parts`` and concatenating all
        text segments.
     3. As a last resort, walks ``response.candidates[0].content.parts``.
+
+    If extraction fails because the model exhausted its token budget on
+    thinking (finish_reason=MAX_TOKENS / value 2), raises a descriptive
+    ValueError so the caller can surface a useful error instead of a
+    silent empty string.
     """
     # Fast path — works for single-part text responses
     try:
@@ -510,7 +515,41 @@ def extract_response_text(response: Any) -> str:
     except (ValueError, AttributeError, IndexError):
         pass
 
+    # Build a descriptive diagnostic so callers/logs explain WHY no text came back.
+    finish_reason = None
+    usage_summary = ""
+    try:
+        finish_reason = int(response.candidates[0].finish_reason)
+    except (AttributeError, IndexError, ValueError, TypeError):
+        pass
+    try:
+        um = response.usage_metadata
+        thinking = (
+            um.total_token_count - um.prompt_token_count - um.candidates_token_count
+        )
+        usage_summary = (
+            f" [tokens: prompt={um.prompt_token_count}, "
+            f"output={um.candidates_token_count}, thinking≈{thinking}, "
+            f"total={um.total_token_count}]"
+        )
+    except (AttributeError, TypeError):
+        pass
+
+    if finish_reason == 2:  # MAX_TOKENS
+        raise ValueError(
+            "Gemini ran out of output tokens before producing a response — "
+            "the thinking step consumed the entire max_output_tokens budget. "
+            "Increase max_output_tokens (e.g. 8192) or simplify the prompt."
+            f"{usage_summary}"
+        )
+    if finish_reason == 3:  # SAFETY
+        raise ValueError(
+            "Gemini response was blocked by safety filters."
+            f"{usage_summary}"
+        )
+
     raise ValueError(
         "Could not extract text from Gemini response — "
-        "response has no text parts or is blocked."
+        f"response has no text parts (finish_reason={finish_reason})."
+        f"{usage_summary}"
     )

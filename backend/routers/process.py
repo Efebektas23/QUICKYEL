@@ -149,6 +149,16 @@ async def process_receipt(request: ProcessReceiptRequest):
             confidence=parsed_data.confidence or 0.5
         )
         
+    except ValueError as e:
+        # Parsing/extraction errors from Gemini surface as ValueError with a
+        # human-readable message — pass through as 422 so the frontend can show
+        # the actual reason (truncated response, blocked, invalid JSON, etc.)
+        # instead of a generic "Failed to process receipt".
+        logger.error(f"Receipt parsing error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(e),
+        )
     except Exception as e:
         logger.error(f"Error processing receipt: {str(e)}")
         raise HTTPException(

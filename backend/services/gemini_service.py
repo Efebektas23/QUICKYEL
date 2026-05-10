@@ -162,12 +162,19 @@ RESPOND WITH ONLY THIS JSON (no markdown, no explanation):
             
             # Initialize resilient model factory (retry + fallback + circuit breaker)
             # Uses gemini-2.5-pro (best OCR/vision) → gemini-2.5-flash (fast fallback)
+            #
+            # IMPORTANT: gemini-2.5-* are "thinking" models whose internal reasoning
+            # tokens are charged against max_output_tokens. Receipts with dense data
+            # (QR codes, multiple line items, taxes) routinely consume 700–2200
+            # thinking tokens before emitting any JSON. A 1024 cap silently truncates
+            # output to "" → JSON decode fails → empty fields. Use 8192 to leave
+            # ample budget for thinking + the ~200-token JSON payload.
             self.model_factory = ResilientModelFactory(
                 api_key=api_key,
                 primary_config={
                     "temperature": 0.1,
                     "top_p": 0.95,
-                    "max_output_tokens": 1024,
+                    "max_output_tokens": 8192,
                 }
             )
             
@@ -238,17 +245,35 @@ The above {len(image_contents)} images are parts of the SAME receipt or invoice 
             
             content = extract_response_text(response).strip()
             logger.info(f"Gemini Vision raw response: {content[:500]}...")
-            
+
+            if not content:
+                logger.error(
+                    "Gemini Vision returned empty content — likely truncated mid-thinking. "
+                    "Raising so the caller can surface a real error to the user."
+                )
+                raise ValueError(
+                    "Gemini returned no text content for the receipt image. "
+                    "This usually means max_output_tokens is too low for the model's "
+                    "thinking budget. Try a larger limit or a simpler/clearer image."
+                )
+
             return self._parse_gemini_response(content)
-            
+
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse Gemini response as JSON: {e}")
-            return ParsedReceiptData(confidence=0.0)
-            
+            logger.error(
+                f"Failed to parse Gemini response as JSON: {e}. "
+                "Surfacing the error instead of returning blank fields so the user "
+                "sees a real failure rather than an apparently-successful empty result."
+            )
+            raise ValueError(
+                f"Gemini response was not valid JSON ({e.msg}). The receipt could "
+                "not be parsed — please retry or use manual entry."
+            )
+
         except Exception as e:
             logger.error(f"Gemini Vision parsing failed: {str(e)}")
             raise
-    
+
     async def parse_receipt(self, ocr_text: str) -> ParsedReceiptData:
         """
         Parse pre-extracted OCR text into structured expense data using Gemini.
