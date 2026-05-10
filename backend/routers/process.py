@@ -1,4 +1,9 @@
-"""Process receipt endpoint - OCR + Gemini only (no database)."""
+"""Process receipt endpoint - Direct Gemini Vision (no separate OCR step).
+
+Sends receipt/invoice images directly to Gemini Pro/Flash for combined
+OCR + parsing. This eliminates the old Google Cloud Vision OCR step which
+frequently returned empty results for receipts.
+"""
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
@@ -7,7 +12,6 @@ import logging
 import httpx
 from datetime import datetime
 
-from services.ocr_service import ocr_service
 from services.gemini_service import gemini_service
 from services.currency_service import currency_service
 
@@ -46,24 +50,26 @@ class ProcessReceiptResponse(BaseModel):
 @router.post("/", response_model=ProcessReceiptResponse)
 async def process_receipt(request: ProcessReceiptRequest):
     """
-    Process a receipt image through OCR + Gemini pipeline.
+    Process a receipt image through Gemini Vision pipeline (direct image → AI).
     Supports multiple images for long receipts.
     
     1. Download image(s) from Firebase Storage URL
-    2. Extract text with Google Cloud Vision OCR
-    3. Parse with Gemini AI
-    4. Convert currency if USD
-    5. Return parsed data (frontend saves to Firestore)
+    2. Send images directly to Gemini Pro/Flash for OCR + parsing (single step)
+    3. Convert currency if USD
+    4. Return parsed data (frontend saves to Firestore)
+    
+    NOTE: This bypasses the old Google Cloud Vision OCR step entirely.
+    Gemini's built-in vision has significantly better OCR for receipts/invoices.
     """
     try:
         logger.info(f"Processing receipt for expense {request.expense_id}")
         
         # Get all image URLs (support multiple images for long receipts)
         image_urls = request.image_urls if request.image_urls else [request.image_url]
-        logger.info(f"Processing {len(image_urls)} image(s)")
+        logger.info(f"Processing {len(image_urls)} image(s) via Gemini Vision (direct)")
         
-        # Step 1 & 2: Download and OCR all images
-        all_ocr_text = []
+        # Step 1: Download all images as raw bytes
+        image_contents = []
         async with httpx.AsyncClient(timeout=60.0) as client:  # Increased timeout for larger invoice images
             for i, url in enumerate(image_urls):
                 logger.info(f"Downloading image {i+1}/{len(image_urls)}")
@@ -72,28 +78,28 @@ async def process_receipt(request: ProcessReceiptRequest):
                     logger.warning(f"Could not download image {i+1}: {url}")
                     continue
                 
-                image_content = response.content
-                ocr_text = await ocr_service.extract_text_from_bytes(image_content)
-                if ocr_text:
-                    all_ocr_text.append(f"--- IMAGE {i+1} ---\n{ocr_text}")
-                    logger.info(f"OCR extracted {len(ocr_text)} chars from image {i+1}")
+                image_bytes = response.content
+                if len(image_bytes) > 0:
+                    image_contents.append(image_bytes)
+                    logger.info(f"Downloaded image {i+1}: {len(image_bytes)} bytes")
+                else:
+                    logger.warning(f"Image {i+1} is empty (0 bytes)")
         
-        # Combine all OCR text
-        ocr_text = "\n\n".join(all_ocr_text)
-        
-        if not ocr_text:
+        if not image_contents:
+            logger.error("No images could be downloaded")
             return ProcessReceiptResponse(
                 expense_id=request.expense_id,
                 raw_text="",
                 confidence=0.0
             )
         
-        logger.info(f"OCR extracted {len(ocr_text)} characters")
+        total_bytes = sum(len(b) for b in image_contents)
+        logger.info(f"Downloaded {len(image_contents)} image(s), {total_bytes} bytes total")
         
-        # Step 3: Parse with Gemini
-        parsed_data = await gemini_service.parse_receipt(ocr_text)
+        # Step 2: Send images directly to Gemini Vision for OCR + parsing (single step)
+        parsed_data = await gemini_service.parse_receipt_from_images(image_contents)
         
-        # Step 4: Currency conversion if USD
+        # Step 3: Currency conversion if USD
         exchange_rate = 1.0
         cad_amount = parsed_data.total_amount
         currency = "CAD"
@@ -139,7 +145,7 @@ async def process_receipt(request: ProcessReceiptRequest):
             cad_amount=cad_amount,
             card_last_4=parsed_data.card_last_4,
             invoice_number=parsed_data.invoice_number,
-            raw_text=ocr_text,
+            raw_text=f"[Gemini Vision - {len(image_contents)} image(s), {total_bytes} bytes]",
             confidence=parsed_data.confidence or 0.5
         )
         
@@ -149,4 +155,3 @@ async def process_receipt(request: ProcessReceiptRequest):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error processing receipt: {str(e)}"
         )
-

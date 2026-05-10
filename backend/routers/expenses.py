@@ -128,15 +128,14 @@ async def upload_receipt(
     current_user: User = Depends(get_current_user)
 ):
     """
-    Upload a receipt image and process it through the Google Native pipeline.
+    Upload a receipt image and process it through the Gemini Vision pipeline.
     
     Pipeline Steps:
     1. Upload image to Google Cloud Storage
-    2. Extract text with Google Cloud Vision OCR
-    3. Parse text with Google Gemini 1.5 Flash
-    4. Convert currency if needed (Bank of Canada API)
-    5. Match payment card
-    6. Save to database (pending verification)
+    2. Send image directly to Gemini Pro/Flash for OCR + parsing (single step)
+    3. Convert currency if needed (Bank of Canada API)
+    4. Match payment card
+    5. Save to database (pending verification)
     """
     # Validate file type
     allowed_types = ["image/jpeg", "image/png", "image/gif", "image/webp", "image/heic"]
@@ -175,22 +174,17 @@ async def upload_receipt(
         )
         expense.receipt_image_url = image_url
         
-        # Step 2: OCR with Google Cloud Vision (with rate limiting)
-        logger.info(f"Processing receipt for expense {expense.id}")
-        ocr_text = await ocr_service.extract_text(content, db)
+        # Step 2: Send image directly to Gemini Vision for OCR + parsing (single step)
+        logger.info(f"Processing receipt for expense {expense.id} via Gemini Vision")
+        parsed_data = await gemini_service.parse_receipt_from_images([content])
         
-        if not ocr_text:
+        if parsed_data.confidence == 0.0 and not parsed_data.vendor_name and not parsed_data.total_amount:
             expense.processing_status = "error"
-            expense.error_message = "Could not extract text from image. Please ensure the receipt is clearly visible."
+            expense.error_message = "Could not extract data from image. Please ensure the receipt is clearly visible."
             await db.commit()
             return ExpenseResponse.model_validate(expense)
         
-        expense.raw_ocr_text = ocr_text
-        
-        # Step 3: Parse with Google Gemini 1.5 Flash
-        parsed_data = await gemini_service.parse_receipt(ocr_text)
-        
-        # Step 4: Apply parsed data
+        expense.raw_ocr_text = f"[Gemini Vision - 1 image, {len(content)} bytes]"
         expense.vendor_name = parsed_data.vendor_name
         expense.card_last_4 = parsed_data.card_last_4
         
@@ -233,7 +227,7 @@ async def upload_receipt(
             expense.pst_amount = 0.0
             expense.tax_amount = 0.0
         
-        # Step 5: Currency conversion (Bank of Canada API)
+        # Step 3: Currency conversion (Bank of Canada API)
         if expense.jurisdiction == Jurisdiction.USA and expense.original_amount:
             expense.original_currency = "USD"
             rate = await currency_service.get_exchange_rate(expense.transaction_date, db)
@@ -248,7 +242,7 @@ async def upload_receipt(
 
         apply_usd_payment_tax_policy(expense)
         
-        # Step 6: Match payment card
+        # Step 4: Match payment card
         if expense.card_last_4:
             source, _ = await match_card(db, current_user.id, expense.card_last_4)
             expense.payment_source = PaymentSource(source)

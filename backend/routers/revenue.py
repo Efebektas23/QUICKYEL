@@ -1,4 +1,4 @@
-"""Process Rate Confirmation endpoint - OCR + Gemini for revenue parsing."""
+"""Process Rate Confirmation endpoint - Direct Gemini Vision for revenue parsing."""
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
@@ -9,7 +9,6 @@ import json
 
 from config import settings
 from services.resilient_ai import ResilientModelFactory, map_gemini_exception_to_http
-from services.ocr_service import ocr_service
 
 router = APIRouter()
 logger = logging.getLogger(__name__)

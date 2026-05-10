@@ -2,13 +2,15 @@
 
 Enhanced with resilient AI wrapper:
 - Exponential backoff retry (503/429/500)
-- Model fallback (gemini-2.5-flash → gemini-2.5-flash-lite)
+- Model fallback (gemini-2.5-pro → gemini-2.5-flash)
 - Circuit breaker (prevents cascade failures)
+- Direct image vision: sends images directly to Gemini (no separate OCR needed)
 """
 
 import google.generativeai as genai
 import json
-from typing import Optional
+import base64
+from typing import Optional, List
 import logging
 from datetime import datetime
 import os
@@ -22,12 +24,15 @@ logger = logging.getLogger(__name__)
 
 class GeminiService:
     """
-    Service for parsing OCR text into structured expense data using Gemini.
+    Service for parsing receipt/invoice images into structured expense data using Gemini.
     Uses Google AI SDK with resilient wrapper for retry/fallback/circuit breaker.
+    
+    Primary mode: Direct image vision (sends images directly to Gemini Pro/Flash).
+    Fallback mode: OCR text parsing (if images unavailable, parse pre-extracted text).
     """
     
     SYSTEM_PROMPT = """You are an expert accountant for a Canadian logistics/trucking company. 
-From the provided document text (receipt OR invoice), extract the following information and return ONLY valid JSON.
+From the provided document (receipt OR invoice image), extract the following information and return ONLY valid JSON.
 
 DOCUMENT TYPES YOU WILL SEE:
 - Store receipts (supermarkets, gas stations, restaurants)
@@ -156,6 +161,7 @@ RESPOND WITH ONLY THIS JSON (no markdown, no explanation):
                 return
             
             # Initialize resilient model factory (retry + fallback + circuit breaker)
+            # Uses gemini-2.5-pro (best OCR/vision) → gemini-2.5-flash (fast fallback)
             self.model_factory = ResilientModelFactory(
                 api_key=api_key,
                 primary_config={
@@ -168,15 +174,91 @@ RESPOND WITH ONLY THIS JSON (no markdown, no explanation):
             # Keep self.model for backward compatibility checks
             self.model = self.model_factory.primary_model
             
-            logger.info("Gemini service initialized with resilient AI wrapper")
+            logger.info("Gemini service initialized with resilient AI wrapper (vision-capable)")
             
         except Exception as e:
             logger.error(f"Failed to initialize Gemini service: {str(e)}")
             self.model_factory = None
             self.model = None
     
+    async def parse_receipt_from_images(self, image_contents: List[bytes]) -> ParsedReceiptData:
+        """
+        Parse receipt/invoice images directly using Gemini's built-in vision + OCR.
+        
+        This is the PRIMARY method — sends raw image bytes to Gemini Pro/Flash which
+        has significantly better OCR than Google Cloud Vision for receipts/invoices.
+        No separate OCR step needed.
+        
+        Args:
+            image_contents: List of raw image bytes (one or more images of the same receipt)
+            
+        Returns:
+            ParsedReceiptData with extracted fields
+        """
+        # Fallback if no model available
+        if self.model_factory is None or not self.model_factory.is_available:
+            logger.warning("Gemini models not available, returning empty parsed data")
+            return ParsedReceiptData(confidence=0.0)
+        
+        try:
+            # Build multimodal prompt: images + text instruction
+            prompt_parts = []
+            
+            for i, img_bytes in enumerate(image_contents):
+                # Detect MIME type from magic bytes
+                mime_type = self._detect_mime_type(img_bytes)
+                prompt_parts.append({
+                    "inline_data": {
+                        "mime_type": mime_type,
+                        "data": base64.b64encode(img_bytes).decode("utf-8")
+                    }
+                })
+                logger.info(f"Added image {i+1}/{len(image_contents)} ({len(img_bytes)} bytes, {mime_type})")
+            
+            # Add text instruction after images
+            if len(image_contents) == 1:
+                instruction = f"""{self.SYSTEM_PROMPT}
+
+The above is a receipt or invoice image. Read ALL text from the image carefully, then extract and return the JSON."""
+            else:
+                instruction = f"""{self.SYSTEM_PROMPT}
+
+The above {len(image_contents)} images are parts of the SAME receipt or invoice (e.g., a long receipt photographed in multiple parts, top to bottom). Read ALL text from ALL images carefully, combine them as one document, then extract and return the JSON."""
+            
+            prompt_parts.append(instruction)
+            
+            total_bytes = sum(len(b) for b in image_contents)
+            logger.info(f"Sending {len(image_contents)} image(s) ({total_bytes} bytes total) directly to Gemini Vision")
+            
+            # Use resilient generate with retry + fallback + circuit breaker
+            response = self.model_factory.generate(
+                prompt=prompt_parts,
+                operation_name="receipt_vision_parsing",
+            )
+            
+            content = response.text.strip()
+            logger.info(f"Gemini Vision raw response: {content[:500]}...")
+            
+            return self._parse_gemini_response(content)
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse Gemini response as JSON: {e}")
+            return ParsedReceiptData(confidence=0.0)
+            
+        except Exception as e:
+            logger.error(f"Gemini Vision parsing failed: {str(e)}")
+            raise
+    
     async def parse_receipt(self, ocr_text: str) -> ParsedReceiptData:
-        """Parse OCR text into structured expense data using Gemini with retry/fallback."""
+        """
+        Parse pre-extracted OCR text into structured expense data using Gemini.
+        
+        This is the FALLBACK method — used when image bytes are not available
+        and only OCR text is provided (e.g., from Google Cloud Vision).
+        
+        For better accuracy, prefer parse_receipt_from_images() which sends
+        images directly to Gemini's built-in vision.
+        """
         
         # Fallback if no model available
         if self.model_factory is None or not self.model_factory.is_available:
@@ -204,57 +286,7 @@ EXTRACT AND RETURN JSON:"""
             content = response.text.strip()
             logger.info(f"Gemini raw response: {content[:500]}...")
             
-            # Clean response if it has markdown code blocks
-            if content.startswith("```"):
-                lines = content.split("\n")
-                if lines[0].startswith("```"):
-                    lines = lines[1:]
-                if lines and lines[-1].strip() == "```":
-                    lines = lines[:-1]
-                content = "\n".join(lines).strip()
-            
-            # Parse the JSON response
-            data = json.loads(content)
-            
-            jurisdiction = data.get("jurisdiction", "unknown").lower()
-            province = data.get("province")
-            
-            # Extract GST, HST, and PST separately
-            if jurisdiction == "canada":
-                gst_amount = data.get("gst_amount", 0.0)
-                hst_amount = data.get("hst_amount", 0.0)
-                pst_amount = data.get("pst_amount", 0.0)
-            else:
-                # US receipts - no recoverable tax
-                gst_amount = 0.0
-                hst_amount = 0.0
-                pst_amount = 0.0
-            
-            # Total tax = sum of GST + HST + PST
-            tax_amount = gst_amount + hst_amount + pst_amount
-            
-            result = ParsedReceiptData(
-                vendor_name=data.get("vendor_name"),
-                transaction_date=data.get("transaction_date"),
-                jurisdiction=jurisdiction,
-                province=province,
-                category=data.get("category", "uncategorized").lower().replace(" ", "_"),
-                total_amount=data.get("total_amount"),
-                gst_amount=gst_amount,
-                hst_amount=hst_amount,
-                pst_amount=pst_amount,
-                tax_amount=tax_amount,
-                card_last_4=data.get("card_last_4"),
-                invoice_number=data.get("invoice_number"),
-                confidence=data.get("confidence", 0.5)
-            )
-            
-            logger.info(f"Parsed receipt: vendor={result.vendor_name}, "
-                       f"amount={result.total_amount}, jurisdiction={result.jurisdiction}, "
-                       f"province={result.province}, category={result.category}, "
-                       f"gst={result.gst_amount}, hst={result.hst_amount}, pst={result.pst_amount}")
-            
-            return result
+            return self._parse_gemini_response(content)
             
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse Gemini response as JSON: {e}")
@@ -263,6 +295,76 @@ EXTRACT AND RETURN JSON:"""
         except Exception as e:
             logger.error(f"Gemini parsing failed: {str(e)}")
             raise
+    
+    def _detect_mime_type(self, image_bytes: bytes) -> str:
+        """Detect image MIME type from magic bytes."""
+        if image_bytes[:4] == b'\x89PNG':
+            return "image/png"
+        elif image_bytes[:2] == b'\xff\xd8':
+            return "image/jpeg"
+        elif image_bytes[:4] == b'GIF8':
+            return "image/gif"
+        elif image_bytes[:4] == b'RIFF' and image_bytes[8:12] == b'WEBP':
+            return "image/webp"
+        elif image_bytes[4:12] == b'ftypheic' or image_bytes[4:12] == b'ftypmif1':
+            return "image/heic"
+        else:
+            # Default to JPEG for unknown formats
+            return "image/jpeg"
+    
+    def _parse_gemini_response(self, content: str) -> ParsedReceiptData:
+        """Parse Gemini response text into ParsedReceiptData."""
+        # Clean response if it has markdown code blocks
+        if content.startswith("```"):
+            lines = content.split("\n")
+            if lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            content = "\n".join(lines).strip()
+        
+        # Parse the JSON response
+        data = json.loads(content)
+        
+        jurisdiction = data.get("jurisdiction", "unknown").lower()
+        province = data.get("province")
+        
+        # Extract GST, HST, and PST separately
+        if jurisdiction == "canada":
+            gst_amount = data.get("gst_amount", 0.0)
+            hst_amount = data.get("hst_amount", 0.0)
+            pst_amount = data.get("pst_amount", 0.0)
+        else:
+            # US receipts - no recoverable tax
+            gst_amount = 0.0
+            hst_amount = 0.0
+            pst_amount = 0.0
+        
+        # Total tax = sum of GST + HST + PST
+        tax_amount = gst_amount + hst_amount + pst_amount
+        
+        result = ParsedReceiptData(
+            vendor_name=data.get("vendor_name"),
+            transaction_date=data.get("transaction_date"),
+            jurisdiction=jurisdiction,
+            province=province,
+            category=data.get("category", "uncategorized").lower().replace(" ", "_"),
+            total_amount=data.get("total_amount"),
+            gst_amount=gst_amount,
+            hst_amount=hst_amount,
+            pst_amount=pst_amount,
+            tax_amount=tax_amount,
+            card_last_4=data.get("card_last_4"),
+            invoice_number=data.get("invoice_number"),
+            confidence=data.get("confidence", 0.5)
+        )
+        
+        logger.info(f"Parsed receipt: vendor={result.vendor_name}, "
+                   f"amount={result.total_amount}, jurisdiction={result.jurisdiction}, "
+                   f"province={result.province}, category={result.category}, "
+                   f"gst={result.gst_amount}, hst={result.hst_amount}, pst={result.pst_amount}")
+        
+        return result
 
 
 # Lazy initialization - service will be created on first use
