@@ -27,6 +27,7 @@ import {
 import { formatCurrency, formatDate, cn } from "@/lib/utils";
 import { categoryLabels, categoryColors } from "@/lib/store";
 import { EXPENSE_CATEGORIES } from "@/lib/categories";
+import { ReceiptImageViewer } from "@/components/expenses/ReceiptImageViewer";
 
 function statusBadge(status: CategoryAuditTransaction["matching_status"]) {
   if (status === "matched")
@@ -757,19 +758,14 @@ function TransactionAuditPanel({
                 Open PDF / document
               </a>
             ) : (
-              <a
-                href={e.receipt_image_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="block rounded-lg overflow-hidden border border-slate-700 bg-slate-800"
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={e.receipt_image_url}
-                  alt="Receipt"
-                  className="w-full max-h-48 object-contain"
-                />
-              </a>
+              <ReceiptImageViewer
+                src={e.receipt_image_url}
+                alt="Receipt"
+                aspectRatio="4/3"
+                compact={true}
+                magnifierSize={120}
+                showExternalLink={true}
+              />
             )}
           </div>
         ) : (

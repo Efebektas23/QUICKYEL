@@ -34,6 +34,7 @@ import { formatCurrency, formatDate, cn } from "@/lib/utils";
 import { categoryLabels, categoryColors } from "@/lib/store";
 import { ReviewModal } from "@/components/expenses/ReviewModal";
 import { ReclassifiedAssetBadge } from "@/components/expenses/ReclassifiedAssetBadge";
+import { ReceiptImageViewer } from "@/components/expenses/ReceiptImageViewer";
 
 export default function ExpenseDetailPage() {
   const params = useParams();
@@ -159,21 +160,12 @@ export default function ExpenseDetailPage() {
                 </a>
               </div>
             ) : (
-              <div className="relative aspect-[3/4] rounded-xl overflow-hidden bg-slate-800">
-                <img
+              <ReceiptImageViewer
                   src={expense.receipt_image_url}
                   alt="Receipt"
-                  className="w-full h-full object-contain"
+                  aspectRatio="3/4"
+                  showExternalLink={true}
                 />
-                <a
-                  href={expense.receipt_image_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="absolute bottom-4 right-4 p-2 bg-slate-900/80 backdrop-blur rounded-lg text-white hover:bg-slate-800 transition-colors"
-                >
-                  <ExternalLink className="w-5 h-5" />
-                </a>
-              </div>
             )
           ) : (
             <div className="aspect-[3/4] rounded-xl bg-slate-800 flex items-center justify-center text-slate-500">

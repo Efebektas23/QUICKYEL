@@ -25,6 +25,7 @@ import toast from "react-hot-toast";
 import { expensesApi, cardsApi, isExpenseReclassifiedToAsset } from "@/lib/firebase-api";
 import { expenseIsUsdPayment } from "@/lib/bc-expense-tax";
 import { ReclassifiedAssetBadge } from "@/components/expenses/ReclassifiedAssetBadge";
+import { ReceiptImageViewer } from "@/components/expenses/ReceiptImageViewer";
 import { formatCurrency, formatDate, cn } from "@/lib/utils";
 import { categoryLabels } from "@/lib/store";
 
@@ -433,13 +434,14 @@ export function ReviewModal({
                   Receipt Image
                 </h3>
                 {expense.receipt_image_url ? (
-                  <div className="relative aspect-[3/4] rounded-xl overflow-hidden bg-slate-800">
-                    <img
-                      src={expense.receipt_image_url}
-                      alt="Receipt"
-                      className="w-full h-full object-contain"
-                    />
-                  </div>
+                  <ReceiptImageViewer
+                    src={expense.receipt_image_url}
+                    alt="Receipt"
+                    aspectRatio="3/4"
+                    compact={true}
+                    magnifierSize={140}
+                    showExternalLink={false}
+                  />
                 ) : (
                   <div className="aspect-[3/4] rounded-xl bg-slate-800 flex items-center justify-center text-slate-500">
                     No image available
